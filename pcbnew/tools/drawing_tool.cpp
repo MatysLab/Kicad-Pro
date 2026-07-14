@@ -48,6 +48,7 @@
 #include <status_popup.h>
 #include <tool/tool_manager.h>
 #include <tools/pcb_actions.h>
+#include <tools/drc_tool.h>
 #include <tools/pcb_grid_helper.h>
 #include <kiplatform/ui.h>
 #include <tools/pcb_selection_tool.h>
@@ -61,6 +62,8 @@
 #include <wildcards_and_files_ext.h>
 #include <wx/filedlg.h>
 #include <wx/msgdlg.h>
+
+#include <set>
 
 #include <bitmaps.h>
 #include <board.h>
@@ -4420,6 +4423,34 @@ int DRAWING_TOOL::PlaceViaStitching( const TOOL_EVENT& aEvent )
 
     std::vector<SHAPE_POLY_SET> regions;
 
+    auto appendMatchingZone =
+            [&]( ZONE* aZone )
+            {
+                if( aZone->GetIsRuleArea() || aZone->GetNetCode() != dialog.GetNetCode() )
+                    return;
+
+                bool matchesLayer = false;
+                bool appendedFill = false;
+
+                for( PCB_LAYER_ID layer : layers )
+                {
+                    if( !aZone->IsOnLayer( layer ) )
+                        continue;
+
+                    matchesLayer = true;
+                    std::shared_ptr<SHAPE_POLY_SET> filled = aZone->GetFilledPolysList( layer );
+
+                    if( filled && !filled->IsEmpty() )
+                    {
+                        regions.emplace_back( *filled );
+                        appendedFill = true;
+                    }
+                }
+
+                if( matchesLayer && !appendedFill && aZone->Outline() )
+                    regions.emplace_back( *aZone->Outline() );
+            };
+
     if( dialog.GetSource() == DIALOG_VIA_STITCHING::SOURCE::SELECTED_POLYGONS )
     {
         PCB_SELECTION_TOOL* selectionTool = m_toolMgr->GetTool<PCB_SELECTION_TOOL>();
@@ -4428,13 +4459,7 @@ int DRAWING_TOOL::PlaceViaStitching( const TOOL_EVENT& aEvent )
         {
             if( ZONE* zone = dynamic_cast<ZONE*>( selectedItem ) )
             {
-                bool layerMatches = false;
-
-                for( PCB_LAYER_ID layer : layers )
-                    layerMatches |= zone->IsOnLayer( layer );
-
-                if( !zone->GetIsRuleArea() && layerMatches && zone->Outline() )
-                    regions.emplace_back( *zone->Outline() );
+                appendMatchingZone( zone );
             }
             else if( PCB_SHAPE* shape = dynamic_cast<PCB_SHAPE*>( selectedItem ) )
             {
@@ -4451,23 +4476,17 @@ int DRAWING_TOOL::PlaceViaStitching( const TOOL_EVENT& aEvent )
     else
     {
         for( ZONE* zone : board()->Zones() )
-        {
-            if( zone->GetIsRuleArea() || zone->GetNetCode() != dialog.GetNetCode() )
-                continue;
+            appendMatchingZone( zone );
+    }
 
-            for( PCB_LAYER_ID layer : layers )
-            {
-                if( !zone->IsOnLayer( layer ) )
-                    continue;
-
-                std::shared_ptr<SHAPE_POLY_SET> filled = zone->GetFilledPolysList( layer );
-
-                if( filled && !filled->IsEmpty() )
-                    regions.emplace_back( *filled );
-                else if( zone->Outline() )
-                    regions.emplace_back( *zone->Outline() );
-            }
-        }
+    // Invoking the command from the Place menu should work without requiring a prior
+    // selection. If the selected-area mode has no usable GND/net polygon, use the matching
+    // poured zones requested in the dialog.
+    if( regions.empty()
+        && dialog.GetSource() == DIALOG_VIA_STITCHING::SOURCE::SELECTED_POLYGONS )
+    {
+        for( ZONE* zone : board()->Zones() )
+            appendMatchingZone( zone );
     }
 
     if( regions.empty() )
@@ -4488,92 +4507,212 @@ int DRAWING_TOOL::PlaceViaStitching( const TOOL_EVENT& aEvent )
         return 0;
     }
 
-    BOX2I bounds;
-
-    for( const SHAPE_POLY_SET& region : regions )
-        bounds.Merge( region.BBox() );
-
-    auto alignDown =
-            [spacing]( int aValue )
-            {
-                return static_cast<int>( std::floor( static_cast<double>( aValue ) / spacing )
-                                         * spacing );
-            };
-
     std::vector<VECTOR2I> positions;
+    std::set<std::pair<int, int>> uniquePositions;
     constexpr size_t MAX_STITCHING_VIAS = 10000;
 
-    for( int y = alignDown( bounds.GetTop() ); y <= bounds.GetBottom(); y += spacing )
-    {
-        for( int x = alignDown( bounds.GetLeft() ); x <= bounds.GetRight(); x += spacing )
-        {
-            const VECTOR2I position( x, y );
-            bool inside = false;
+    std::shared_ptr<DRC_ENGINE> drcEngine;
 
-            for( const SHAPE_POLY_SET& region : regions )
+    if( DRC_TOOL* drcTool = m_toolMgr->GetTool<DRC_TOOL>() )
+        drcEngine = drcTool->GetDRCEngine();
+
+    PCB_VIA candidateVia( board() );
+    candidateVia.SetViaType( VIATYPE::THROUGH );
+    candidateVia.SetLayerPair( F_Cu, B_Cu );
+    candidateVia.SetWidth( PADSTACK::ALL_LAYERS, diameter );
+    candidateVia.SetDrill( drill );
+    candidateVia.SetNetCode( dialog.GetNetCode() );
+
+    auto violatesCopperClearance =
+            [&]( BOARD_CONNECTED_ITEM* aOther )
             {
-                if( region.PointInside( position )
-                    && !region.CollideEdge( position, nullptr, diameter / 2 ) )
+                if( aOther->GetNetCode() == candidateVia.GetNetCode() )
+                    return false;
+
+                if( !drcEngine )
+                    return aOther->HitTest( candidateVia.GetPosition(), diameter / 2 );
+
+                const LSET overlap = candidateVia.GetLayerSet() & aOther->GetLayerSet()
+                                     & LSET::AllCuMask();
+
+                for( PCB_LAYER_ID layer : overlap.CuStack() )
                 {
-                    inside = true;
-                    break;
+                    DRC_CONSTRAINT constraint = drcEngine->EvalRules(
+                            CLEARANCE_CONSTRAINT, &candidateVia, aOther, layer );
+
+                    if( !constraint.Value().HasMin()
+                        || constraint.GetSeverity() == RPT_SEVERITY_IGNORE )
+                    {
+                        continue;
+                    }
+
+                    std::shared_ptr<SHAPE> viaShape = candidateVia.GetEffectiveShape( layer );
+                    std::shared_ptr<SHAPE> otherShape = aOther->GetEffectiveShape( layer );
+
+                    if( viaShape && otherShape
+                        && viaShape->GetClearance( otherShape.get() )
+                                   < constraint.Value().Min() )
+                    {
+                        return true;
+                    }
                 }
-            }
 
-            if( !inside )
-                continue;
+                return false;
+            };
 
-            bool obstructed = false;
-
-            for( PCB_TRACK* track : board()->Tracks() )
+    auto violatesHoleClearance =
+            [&]( BOARD_ITEM* aOther )
             {
-                if( track->HitTest( position, diameter / 2 ) )
+                if( !aOther->HasHole() )
+                    return false;
+
+                std::shared_ptr<SHAPE_SEGMENT> viaHole = candidateVia.GetEffectiveHoleShape();
+                std::shared_ptr<SHAPE_SEGMENT> otherHole = aOther->GetEffectiveHoleShape();
+
+                if( !viaHole || !otherHole )
+                    return false;
+
+                int requiredClearance = 0;
+
+                if( drcEngine )
                 {
-                    obstructed = true;
-                    break;
-                }
-            }
+                    DRC_CONSTRAINT constraint = drcEngine->EvalRules(
+                            HOLE_TO_HOLE_CONSTRAINT, &candidateVia, aOther, UNDEFINED_LAYER );
 
-            if( !obstructed )
+                    if( constraint.Value().HasMin()
+                        && constraint.GetSeverity() != RPT_SEVERITY_IGNORE )
+                    {
+                        requiredClearance = constraint.Value().Min();
+                    }
+                }
+
+                return viaHole->GetClearance( otherHole.get() ) < requiredClearance;
+            };
+
+    auto positionIsUsable =
+            [&]( const SHAPE_POLY_SET& aRegion, const VECTOR2I& aPosition )
             {
+                if( !aRegion.PointInside( aPosition )
+                    || aRegion.CollideEdge( aPosition, nullptr, diameter / 2 ) )
+                {
+                    return false;
+                }
+
+                candidateVia.SetPosition( aPosition );
+
+                for( PCB_TRACK* track : board()->Tracks() )
+                {
+                    if( violatesCopperClearance( track ) || violatesHoleClearance( track ) )
+                        return false;
+                }
+
                 for( ZONE* zone : board()->Zones() )
                 {
-                    if( !zone->GetIsRuleArea() || !zone->GetDoNotAllowVias() || !zone->Outline() )
+                    if( !zone->GetIsRuleArea() || !zone->GetDoNotAllowVias()
+                        || !zone->Outline() )
+                    {
                         continue;
+                    }
 
                     bool appliesToLayer = false;
 
                     for( PCB_LAYER_ID layer : layers )
                         appliesToLayer |= zone->IsOnLayer( layer );
 
-                    if( appliesToLayer && zone->Outline()->PointInside( position ) )
-                    {
-                        obstructed = true;
-                        break;
-                    }
+                    if( appliesToLayer && zone->Outline()->PointInside( aPosition ) )
+                        return false;
                 }
-            }
 
-            if( !obstructed )
-            {
                 for( FOOTPRINT* footprint : board()->Footprints() )
                 {
                     for( PAD* pad : footprint->Pads() )
                     {
-                        if( pad->HitTest( position, diameter / 2 ) )
+                        if( violatesCopperClearance( pad ) || violatesHoleClearance( pad ) )
+                            return false;
+                    }
+                }
+
+                return true;
+            };
+
+    BOX2I scanBounds = regions.front().BBox();
+
+    for( size_t ii = 1; ii < regions.size(); ++ii )
+        scanBounds.Merge( regions[ii].BBox() );
+
+    // Visit every spacing-sized cell across the complete stitching area.  First try the cell
+    // center, then walk outward inside that cell to find a nearby legal location.  A blocked
+    // cell never prevents later cells from being evaluated.
+    const int probeStep = std::max( diameter, spacing / 8 );
+    const int maxProbeRing = std::max( 1, spacing / ( 2 * probeStep ) );
+    const long long minimumSpacingSquared = static_cast<long long>( spacing ) * spacing;
+
+    auto sufficientlyFarFromNewVias =
+            [&]( const VECTOR2I& aPosition )
+            {
+                for( const VECTOR2I& placed : positions )
+                {
+                    const long long dx = static_cast<long long>( aPosition.x ) - placed.x;
+                    const long long dy = static_cast<long long>( aPosition.y ) - placed.y;
+
+                    if( dx * dx + dy * dy < minimumSpacingSquared )
+                        return false;
+                }
+
+                return true;
+            };
+
+    auto usableInAnyRegion =
+            [&]( const VECTOR2I& aPosition )
+            {
+                if( !sufficientlyFarFromNewVias( aPosition ) )
+                    return false;
+
+                for( const SHAPE_POLY_SET& region : regions )
+                {
+                    if( positionIsUsable( region, aPosition ) )
+                        return true;
+                }
+
+                return false;
+            };
+
+    const int firstCellX = scanBounds.GetLeft() + spacing / 2;
+    const int firstCellY = scanBounds.GetTop() + spacing / 2;
+
+    for( int cellY = firstCellY; cellY <= scanBounds.GetBottom(); cellY += spacing )
+    {
+        for( int cellX = firstCellX; cellX <= scanBounds.GetRight(); cellX += spacing )
+        {
+            bool placedInCell = false;
+
+            for( int ring = 0; ring <= maxProbeRing && !placedInCell; ++ring )
+            {
+                for( int offsetY = -ring; offsetY <= ring && !placedInCell; ++offsetY )
+                {
+                    for( int offsetX = -ring; offsetX <= ring; ++offsetX )
+                    {
+                        if( ring > 0 && std::max( std::abs( offsetX ),
+                                                 std::abs( offsetY ) ) != ring )
                         {
-                            obstructed = true;
+                            continue;
+                        }
+
+                        const VECTOR2I position( cellX + offsetX * probeStep,
+                                                 cellY + offsetY * probeStep );
+
+                        if( !usableInAnyRegion( position ) )
+                            continue;
+
+                        if( uniquePositions.emplace( position.x, position.y ).second )
+                        {
+                            positions.push_back( position );
+                            placedInCell = true;
                             break;
                         }
                     }
-
-                    if( obstructed )
-                        break;
                 }
             }
-
-            if( !obstructed )
-                positions.push_back( position );
 
             if( positions.size() >= MAX_STITCHING_VIAS )
                 break;
@@ -4585,7 +4724,8 @@ int DRAWING_TOOL::PlaceViaStitching( const TOOL_EVENT& aEvent )
 
     if( positions.empty() )
     {
-        wxMessageBox( _( "The selected area is too small for the requested via spacing." ),
+        wxMessageBox( _( "No unobstructed via center fits inside the selected copper area. "
+                         "Try a smaller via diameter or select a larger poured zone." ),
                       _( "Via Stitching" ), wxOK | wxICON_INFORMATION, m_frame );
         return 0;
     }
