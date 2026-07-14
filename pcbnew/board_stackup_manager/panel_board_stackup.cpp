@@ -36,7 +36,12 @@
 #include <wx/clipbrd.h>
 #include <wx/wupdlock.h>
 #include <wx/richmsgdlg.h>
+#include <wx/statbox.h>
 #include <math/util.h>      // for KiROUND
+#include <transline_calculations/coupled_microstrip.h>
+#include <transline_calculations/coupled_stripline.h>
+#include <transline_calculations/microstrip.h>
+#include <transline_calculations/stripline.h>
 
 #include "panel_board_stackup.h"
 #include "panel_board_finish.h"
@@ -50,6 +55,10 @@
 #include <eda_list_dialog.h>
 #include <richio.h>
 #include <string_utils.h>               // for UIDouble2Str()
+
+#include <algorithm>
+#include <cmath>
+#include <memory>
 
 
 // Some wx widget ID to know what widget has fired a event:
@@ -72,6 +81,214 @@ static wxColor dielectricColor( 75, 120, 75 );
 static wxColor pasteColor( 200, 200, 200 );
 
 static void drawBitmap( wxBitmap& aBitmap, wxColor aColor );
+
+
+const std::vector<PANEL_SETUP_BOARD_STACKUP::STACKUP_PRESET>&
+PANEL_SETUP_BOARD_STACKUP::getStackupPresets()
+{
+    static const std::vector<STACKUP_PRESET> presets = []
+    {
+        std::vector<STACKUP_PRESET> result;
+
+        auto dielectric = []( const wxString& aMaterial, double aThickness, double aEpsilonR,
+                              bool aCore = false )
+        {
+            return PRESET_DIELECTRIC{ aMaterial, aThickness, aEpsilonR, aCore };
+        };
+
+        auto jlcPrepreg = [&]( const wxString& aType, double aThickness )
+        {
+            double epsilonR = 4.1;
+
+            if( aType == wxT( "7628" ) )
+                epsilonR = 4.4;
+            else if( aType == wxT( "1080" ) )
+                epsilonR = 3.91;
+            else if( aType == wxT( "2116" ) )
+                epsilonR = 4.16;
+
+            return dielectric( aType + wxT( "*1" ), aThickness, epsilonR );
+        };
+
+        auto core = [&]( double aThickness )
+        {
+            return dielectric( wxT( "Core" ), aThickness, 4.6, true );
+        };
+
+        auto reversed = []( std::vector<PRESET_DIELECTRIC> aLayers )
+        {
+            std::reverse( aLayers.begin(), aLayers.end() );
+            return aLayers;
+        };
+
+        auto addJlc4 = [&]( const wxString& aName, std::vector<PRESET_DIELECTRIC> aOuter,
+                            double aCoreThickness )
+        {
+            result.push_back( { wxT( "JLCPCB" ), aName, { 0.035, 0.0152, 0.0152, 0.035 },
+                                { aOuter, { core( aCoreThickness ) }, reversed( aOuter ) } } );
+        };
+
+        addJlc4( wxT( "JLC04161H-7628" ), { jlcPrepreg( wxT( "7628" ), 0.2104 ) }, 1.065 );
+        addJlc4( wxT( "JLC04161H-3313" ), { jlcPrepreg( wxT( "3313" ), 0.0994 ) }, 1.265 );
+        addJlc4( wxT( "JLC04161H-1080" ), { jlcPrepreg( wxT( "1080" ), 0.0764 ) }, 1.265 );
+        addJlc4( wxT( "JLC04161H-7628A" ),
+                 { jlcPrepreg( wxT( "7628" ), 0.218 ), jlcPrepreg( wxT( "1080" ), 0.0764 ) },
+                 0.865 );
+        addJlc4( wxT( "JLC04161H-3313A" ),
+                 { jlcPrepreg( wxT( "3313" ), 0.107 ), jlcPrepreg( wxT( "3313" ), 0.0994 ) },
+                 1.065 );
+        addJlc4( wxT( "JLC04161H-1080A" ),
+                 { jlcPrepreg( wxT( "1080" ), 0.084 ), jlcPrepreg( wxT( "1080" ), 0.0764 ) },
+                 1.065 );
+        addJlc4( wxT( "JLC04161H-7628B" ),
+                 { jlcPrepreg( wxT( "7628" ), 0.218 ), jlcPrepreg( wxT( "7628" ), 0.218 ),
+                   jlcPrepreg( wxT( "2116" ), 0.1164 ) },
+                 0.4 );
+        addJlc4( wxT( "JLC04161H-2116A" ),
+                 { jlcPrepreg( wxT( "2116" ), 0.124 ), jlcPrepreg( wxT( "7628" ), 0.218 ),
+                   jlcPrepreg( wxT( "2116" ), 0.1164 ) },
+                 0.6 );
+        addJlc4( wxT( "JLC04161H-2116B" ),
+                 { jlcPrepreg( wxT( "2116" ), 0.124 ), jlcPrepreg( wxT( "7628" ), 0.2104 ) },
+                 0.865 );
+        addJlc4( wxT( "JLC04161H-2116C" ),
+                 { jlcPrepreg( wxT( "2116" ), 0.124 ), jlcPrepreg( wxT( "1080" ), 0.0764 ) },
+                 1.065 );
+        addJlc4( wxT( "JLC04161H-2116" ), { jlcPrepreg( wxT( "2116" ), 0.1164 ) }, 1.265 );
+        addJlc4( wxT( "JLC04161H-7628E" ),
+                 { jlcPrepreg( wxT( "7628" ), 0.218 ), jlcPrepreg( wxT( "7628" ), 0.2104 ) },
+                 0.6 );
+        addJlc4( wxT( "JLC04161H-2116D" ),
+                 { jlcPrepreg( wxT( "2116" ), 0.124 ), jlcPrepreg( wxT( "7628" ), 0.2104 ) },
+                 0.7 );
+        addJlc4( wxT( "JLC04161H-7628F" ),
+                 { jlcPrepreg( wxT( "7628" ), 0.218 ), jlcPrepreg( wxT( "7628" ), 0.218 ),
+                   jlcPrepreg( wxT( "7628" ), 0.2104 ) },
+                 0.25 );
+        addJlc4( wxT( "JLC04161H-2116E" ),
+                 { jlcPrepreg( wxT( "2116" ), 0.124 ), jlcPrepreg( wxT( "2116" ), 0.1164 ) },
+                 0.865 );
+        addJlc4( wxT( "JLC04161H-7628D" ), { jlcPrepreg( wxT( "7628" ), 0.2104 ) }, 1.265 );
+        addJlc4( wxT( "JLC04161H-7628C" ),
+                 { jlcPrepreg( wxT( "7628" ), 0.218 ), jlcPrepreg( wxT( "7628" ), 0.218 ),
+                   jlcPrepreg( wxT( "7628" ), 0.2104 ) },
+                 0.15 );
+
+        auto addJlc6 = [&]( const wxString& aName, std::vector<PRESET_DIELECTRIC> aTop,
+                            double aTopCore, std::vector<PRESET_DIELECTRIC> aMiddle,
+                            double aBottomCore, std::vector<PRESET_DIELECTRIC> aBottom )
+        {
+            result.push_back( { wxT( "JLCPCB" ), aName,
+                                { 0.035, 0.0152, 0.0152, 0.0152, 0.0152, 0.035 },
+                                { aTop, { core( aTopCore ) }, aMiddle,
+                                  { core( aBottomCore ) }, aBottom } } );
+        };
+
+        auto symmetricJlc6 = [&]( const wxString& aName, std::vector<PRESET_DIELECTRIC> aOuter,
+                                  double aCore, std::vector<PRESET_DIELECTRIC> aMiddle )
+        {
+            addJlc6( aName, aOuter, aCore, aMiddle, aCore, reversed( aOuter ) );
+        };
+
+        symmetricJlc6( wxT( "JLC06161H-3313" ), { jlcPrepreg( wxT( "3313" ), 0.0994 ) },
+                       0.55, { jlcPrepreg( wxT( "2116" ), 0.1088 ) } );
+        symmetricJlc6( wxT( "JLC06161H-7628" ), { jlcPrepreg( wxT( "7628" ), 0.2104 ) },
+                       0.4, { jlcPrepreg( wxT( "7628" ), 0.2028 ) } );
+        symmetricJlc6( wxT( "JLC06161H-1080" ), { jlcPrepreg( wxT( "1080" ), 0.0764 ) },
+                       0.55, { jlcPrepreg( wxT( "7628" ), 0.2104 ) } );
+        symmetricJlc6( wxT( "JLC06161H-2116A" ), { jlcPrepreg( wxT( "2116" ), 0.1164 ) },
+                       0.13, { jlcPrepreg( wxT( "2116" ), 0.1164 ), core( 0.7 ),
+                               jlcPrepreg( wxT( "2116" ), 0.1164 ) } );
+        symmetricJlc6( wxT( "JLC06161H-1080A" ), { jlcPrepreg( wxT( "1080" ), 0.0764 ) },
+                       0.6, { jlcPrepreg( wxT( "3313" ), 0.0994 ) } );
+        addJlc6( wxT( "JLC06161H-3313C" ),
+                 { jlcPrepreg( wxT( "3313" ), 0.107 ), jlcPrepreg( wxT( "1080" ), 0.0764 ) },
+                 0.4, { jlcPrepreg( wxT( "1080" ), 0.0764 ),
+                        jlcPrepreg( wxT( "1080" ), 0.0764 ) },
+                 0.4, { jlcPrepreg( wxT( "1080" ), 0.0784 ),
+                        jlcPrepreg( wxT( "3313" ), 0.107 ) } );
+        symmetricJlc6( wxT( "JLC06161H-1080B" ), { jlcPrepreg( wxT( "1080" ), 0.0764 ) },
+                       0.1, { jlcPrepreg( wxT( "7628" ), 0.2104 ), core( 0.7 ),
+                              jlcPrepreg( wxT( "7628" ), 0.2104 ) } );
+        symmetricJlc6( wxT( "JLC06161H-3313E" ), { jlcPrepreg( wxT( "3313" ), 0.0994 ) },
+                       0.1, { jlcPrepreg( wxT( "7628" ), 0.2104 ), core( 0.7 ),
+                              jlcPrepreg( wxT( "7628" ), 0.2104 ) } );
+        symmetricJlc6( wxT( "JLC06161H-2116B" ), { jlcPrepreg( wxT( "2116" ), 0.1164 ) },
+                       0.5, { jlcPrepreg( wxT( "1080" ), 0.0764 ),
+                              jlcPrepreg( wxT( "1080" ), 0.0764 ) } );
+        symmetricJlc6( wxT( "JLC06161H-2116" ),
+                       { jlcPrepreg( wxT( "2116" ), 0.127 ),
+                         jlcPrepreg( wxT( "2313" ), 0.0964 ) },
+                       0.3, { jlcPrepreg( wxT( "7628" ), 0.2084 ),
+                              jlcPrepreg( wxT( "7628" ), 0.2084 ) } );
+        symmetricJlc6( wxT( "JLC06161H-7628B" ),
+                       { jlcPrepreg( wxT( "7628" ), 0.218 ),
+                         jlcPrepreg( wxT( "1080" ), 0.0764 ) },
+                       0.35, { jlcPrepreg( wxT( "1080" ), 0.0764 ),
+                               jlcPrepreg( wxT( "1080" ), 0.0764 ) } );
+        symmetricJlc6( wxT( "JLC06161H-3313D" ),
+                       { jlcPrepreg( wxT( "3313" ), 0.107 ),
+                         jlcPrepreg( wxT( "1080" ), 0.0764 ) },
+                       0.25, { jlcPrepreg( wxT( "7628" ), 0.2104 ),
+                               jlcPrepreg( wxT( "2116" ), 0.124 ),
+                               jlcPrepreg( wxT( "7628" ), 0.2104 ) } );
+        symmetricJlc6( wxT( "JLC06161H-7628A" ),
+                       { jlcPrepreg( wxT( "7628" ), 0.218 ),
+                         jlcPrepreg( wxT( "7628" ), 0.218 ),
+                         jlcPrepreg( wxT( "1080" ), 0.0764 ) },
+                       0.1, { jlcPrepreg( wxT( "2116" ), 0.1164 ),
+                              jlcPrepreg( wxT( "2116" ), 0.1164 ) } );
+
+        auto pcbwayPp = [&]( const wxString& aType, double aThickness, double aEpsilonR )
+        {
+            return dielectric( aType, aThickness, aEpsilonR );
+        };
+
+        auto addPcbway = [&]( int aLayers, double aFinishedThickness,
+                              std::vector<PRESET_DIELECTRIC> aDielectrics )
+        {
+            std::vector<double> copper( aLayers, 0.035 );
+            std::vector<std::vector<PRESET_DIELECTRIC>> groups;
+
+            for( const PRESET_DIELECTRIC& layer : aDielectrics )
+                groups.push_back( { layer } );
+
+            result.push_back( { wxT( "PCBWay" ),
+                                wxString::Format( wxT( "Regular %dL / %.1f mm / 1 oz / 70%%" ),
+                                                  aLayers, aFinishedThickness ),
+                                copper, groups } );
+        };
+
+        const PRESET_DIELECTRIC pp7628 = pcbwayPp( wxT( "7628 RC46%" ), 0.196, 4.74 );
+        const PRESET_DIELECTRIC pp2116 = pcbwayPp( wxT( "2116 RC58%" ), 0.130, 4.45 );
+        const PRESET_DIELECTRIC pp3313 = pcbwayPp( wxT( "3313 RC58%" ), 0.103, 4.45 );
+
+        addPcbway( 4, 1.6, { pp7628, core( 1.030 ), pp7628 } );
+        addPcbway( 6, 1.6, { pp2116, core( 0.430 ), pp7628, core( 0.430 ), pp2116 } );
+        addPcbway( 8, 1.6, { pp2116, core( 0.230 ), pp7628, core( 0.230 ), pp7628,
+                             core( 0.230 ), pp2116 } );
+        addPcbway( 10, 1.6, { pp3313, core( 0.130 ), pp7628, core( 0.130 ), pp7628,
+                              core( 0.130 ), pp7628, core( 0.130 ), pp3313 } );
+        addPcbway( 12, 1.6, { pp3313, core( 0.130 ), pp3313, core( 0.130 ), pp3313,
+                              core( 0.130 ), pp3313, core( 0.130 ), pp3313,
+                              core( 0.130 ), pp3313 } );
+
+        for( int layers : { 14, 16, 18 } )
+        {
+            std::vector<PRESET_DIELECTRIC> dielectrics;
+            const double coreThickness = layers == 14 ? 0.170 : ( layers == 16 ? 0.130 : 0.081 );
+
+            for( int ii = 0; ii < layers - 1; ++ii )
+                dielectrics.push_back( ii % 2 == 0 ? pp2116 : core( coreThickness ) );
+
+            addPcbway( layers, 2.4, dielectrics );
+        }
+
+        return result;
+    }();
+
+    return presets;
+}
 
 
 PANEL_SETUP_BOARD_STACKUP::PANEL_SETUP_BOARD_STACKUP( wxWindow* aParentWindow,
@@ -124,6 +341,8 @@ PANEL_SETUP_BOARD_STACKUP::PANEL_SETUP_BOARD_STACKUP( wxWindow* aParentWindow,
     buildLayerStackPanel( true );
     synchronizeWithBoard( true );
     computeBoardThickness();
+    buildStackupPresetControls();
+    buildImpedancePanel();
 
     m_frame->Bind( EDA_EVT_UNITS_CHANGED, &PANEL_SETUP_BOARD_STACKUP::onUnitsChanged, this );
 }
@@ -162,6 +381,14 @@ void PANEL_SETUP_BOARD_STACKUP::onUnitsChanged( wxCommandEvent& event )
 
     convert( m_tcCTValue );
 
+    for( IMPEDANCE_ROW& row : m_impedanceRows )
+    {
+        convert( row.m_gap );
+
+        if( row.m_width->GetValue() != wxT( "—" ) )
+            convert( row.m_width );
+    }
+
     m_lastUnits = newUnits;
 
     event.Skip();
@@ -176,6 +403,7 @@ void PANEL_SETUP_BOARD_STACKUP::onCopperLayersSelCount( wxCommandEvent& event )
     updateIconColor();
     setDefaultLayerWidths( oldBoardWidth );
     computeBoardThickness();
+    rebuildImpedanceRows();
     Layout();
 }
 
@@ -246,6 +474,7 @@ void PANEL_SETUP_BOARD_STACKUP::onAdjustDielectricThickness( wxCommandEvent& eve
         wxMessageBox( _( "All dielectric  thickness layers are locked" ) );
 
     computeBoardThickness();
+    rebuildImpedanceRows();
 }
 
 
@@ -342,6 +571,7 @@ void PANEL_SETUP_BOARD_STACKUP::onAddDielectricLayer( wxCommandEvent& event )
 
         rebuildLayerStackPanel();
         computeBoardThickness();
+        updateAllImpedanceRows();
     }
 }
 
@@ -399,6 +629,7 @@ void PANEL_SETUP_BOARD_STACKUP::onRemoveDielectricLayer( wxCommandEvent& event )
 
         rebuildLayerStackPanel();
         computeBoardThickness();
+        updateAllImpedanceRows();
     }
 }
 
@@ -974,6 +1205,8 @@ void PANEL_SETUP_BOARD_STACKUP::lazyBuildRowUI( BOARD_STACKUP_ROW_UI_ITEM& ui_ro
         wxTextCtrl* textCtrl = new wxTextCtrl( m_scGridWin, wxID_ANY, wxEmptyString,
                                                wxDefaultPosition, m_numericFieldsSize );
         textCtrl->ChangeValue( txt );
+        textCtrl->Bind( wxEVT_TEXT,
+                        &PANEL_SETUP_BOARD_STACKUP::onImpedanceParameterChanged, this );
         m_fgGridSizer->Insert( aPos++, textCtrl, 0, wxLEFT|wxRIGHT|wxALIGN_CENTER_VERTICAL, 2 );
         ui_row_item.m_EpsilonCtrl = textCtrl;
     }
@@ -988,6 +1221,8 @@ void PANEL_SETUP_BOARD_STACKUP::lazyBuildRowUI( BOARD_STACKUP_ROW_UI_ITEM& ui_ro
         wxTextCtrl* textCtrl = new wxTextCtrl( m_scGridWin, wxID_ANY, wxEmptyString,
                                                wxDefaultPosition, m_numericFieldsSize );
         textCtrl->ChangeValue( txt );
+        textCtrl->Bind( wxEVT_TEXT,
+                        &PANEL_SETUP_BOARD_STACKUP::onImpedanceParameterChanged, this );
         m_fgGridSizer->Insert( aPos++, textCtrl, 0, wxLEFT|wxRIGHT|wxALIGN_CENTER_VERTICAL, 2 );
         ui_row_item.m_LossTgCtrl = textCtrl;
     }
@@ -1343,6 +1578,8 @@ void PANEL_SETUP_BOARD_STACKUP::ImportSettingsFrom( BOARD* aBoard )
     rebuildLayerStackPanel( true );
     synchronizeWithBoard( true );
     computeBoardThickness();
+    rebuildImpedanceRows();
+    updateImpedancePanelVisibility();
 
     m_brdSettings = savedSettings;
     m_board = savedBrd;
@@ -1368,6 +1605,7 @@ void PANEL_SETUP_BOARD_STACKUP::OnLayersOptionsChanged( const LSET& aNewLayerSet
         m_enabledLayers = layersList;
 
         synchronizeWithBoard( false );
+        rebuildImpedanceRows();
 
         Layout();
         Refresh();
@@ -1537,6 +1775,8 @@ void PANEL_SETUP_BOARD_STACKUP::onMaterialChange( wxCommandEvent& event )
         if( textCtrl )
             textCtrl->ChangeValue( item->FormatLossTangent( sub_item ) );
     }
+
+    updateAllImpedanceRows();
 }
 
 
@@ -1551,6 +1791,681 @@ void PANEL_SETUP_BOARD_STACKUP::onThicknessChange( wxCommandEvent& event )
     item->SetThickness( m_frame->ValueFromString( value ), idx );
 
     computeBoardThickness();
+    updateAllImpedanceRows();
+}
+
+
+void PANEL_SETUP_BOARD_STACKUP::buildStackupPresetControls()
+{
+    wxStaticText* label = new wxStaticText( this, wxID_ANY, _( "Stackup preset:" ) );
+    m_stackupPreset = new wxChoice( this, wxID_ANY, wxDefaultPosition,
+                                    wxSize( FromDIP( 285 ), -1 ) );
+    m_stackupPreset->SetToolTip(
+            _( "Populate the layer count, copper, dielectric materials, thicknesses, and "
+               "dielectric constants from a manufacturer stackup" ) );
+
+    // Place the preset with the other stackup-level actions, immediately after the
+    // impedance-controlled checkbox and before the dielectric layer buttons.
+    bTopSizer->Insert( 4, label, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP( 10 ) );
+    bTopSizer->Insert( 5, m_stackupPreset, 0, wxALIGN_CENTER_VERTICAL | wxLEFT | wxRIGHT,
+                       FromDIP( 5 ) );
+
+    rebuildPresetChoices();
+    m_stackupPreset->Bind( wxEVT_CHOICE, &PANEL_SETUP_BOARD_STACKUP::onApplyStackupPreset, this );
+}
+
+
+void PANEL_SETUP_BOARD_STACKUP::buildImpedancePanel()
+{
+    m_sizerStackup->SetOrientation( wxHORIZONTAL );
+
+    m_impedancePanel = new wxPanel( this );
+    m_impedancePanel->SetMinSize( wxSize( FromDIP( 500 ), -1 ) );
+
+    wxStaticBoxSizer* panelSizer = new wxStaticBoxSizer( wxVERTICAL, m_impedancePanel,
+                                                         _( "Controlled Impedance" ) );
+
+    wxStaticText* help = new wxStaticText(
+            panelSizer->GetStaticBox(), wxID_ANY,
+            _( "Set the target for each signal layer. Widths use the copper and dielectric "
+               "values currently shown in the stackup and update automatically. Manufacturer "
+               "presets use 0.02 loss tangent where the source table does not specify one." ) );
+    help->Wrap( FromDIP( 460 ) );
+    panelSizer->Add( help, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP( 8 ) );
+
+    m_impedanceGridWindow = new wxScrolledWindow( panelSizer->GetStaticBox(), wxID_ANY,
+                                                   wxDefaultPosition, wxDefaultSize,
+                                                   wxBORDER_NONE | wxHSCROLL | wxVSCROLL );
+    m_impedanceGridWindow->SetScrollRate( FromDIP( 5 ), FromDIP( 5 ) );
+    m_impedanceGrid = new wxFlexGridSizer( 0, 5, FromDIP( 5 ), FromDIP( 4 ) );
+    m_impedanceGrid->AddGrowableCol( 1 );
+    m_impedanceGridWindow->SetSizer( m_impedanceGrid );
+    panelSizer->Add( m_impedanceGridWindow, 1, wxEXPAND | wxLEFT | wxRIGHT,
+                     FromDIP( 6 ) );
+
+    m_impedancePanel->SetSizer( panelSizer );
+    m_sizerStackup->Add( m_impedancePanel, 0, wxEXPAND | wxLEFT, FromDIP( 10 ) );
+
+    m_impedanceControlled->Bind( wxEVT_CHECKBOX,
+                                 &PANEL_SETUP_BOARD_STACKUP::onImpedanceControlled, this );
+    rebuildImpedanceRows();
+    updateImpedancePanelVisibility();
+}
+
+
+void PANEL_SETUP_BOARD_STACKUP::rebuildPresetChoices()
+{
+    if( !m_stackupPreset )
+        return;
+
+    m_visibleStackupPresets.clear();
+    m_stackupPreset->Clear();
+    m_visibleStackupPresets.push_back( nullptr );
+    m_stackupPreset->Append( _( "Current / custom stackup" ) );
+
+    for( const STACKUP_PRESET& preset : getStackupPresets() )
+    {
+        m_visibleStackupPresets.push_back( &preset );
+        m_stackupPreset->Append( wxString::Format( wxT( "%s — %s (%zu layers)" ),
+                                                   preset.m_manufacturer, preset.m_name,
+                                                   preset.m_copperThicknessMm.size() ) );
+    }
+
+    m_stackupPreset->SetSelection( 0 );
+}
+
+
+void PANEL_SETUP_BOARD_STACKUP::onApplyStackupPreset( wxCommandEvent& aEvent )
+{
+    const int selection = m_stackupPreset ? m_stackupPreset->GetSelection() : wxNOT_FOUND;
+
+    if( selection > 0 && selection < static_cast<int>( m_visibleStackupPresets.size() ) )
+        applyStackupPreset( *m_visibleStackupPresets[selection] );
+
+    aEvent.Skip();
+}
+
+
+void PANEL_SETUP_BOARD_STACKUP::applyStackupPreset( const STACKUP_PRESET& aPreset )
+{
+    const int copperCount = static_cast<int>( aPreset.m_copperThicknessMm.size() );
+
+    wxCHECK( copperCount >= 2 && copperCount <= 32 && copperCount % 2 == 0, /* void */ );
+    wxCHECK( aPreset.m_dielectrics.size() == static_cast<size_t>( copperCount - 1 ), /* void */ );
+
+    m_choiceCopperLayers->SetSelection( copperCount / 2 - 1 );
+    updateCopperLayerCount();
+    m_panelLayers->SyncCopperLayers( copperCount );
+    showOnlyActiveLayers();
+
+    size_t copperIndex = 0;
+
+    for( BOARD_STACKUP_ITEM* item : m_stackup.GetList() )
+    {
+        if( item->GetType() == BS_ITEM_TYPE_COPPER && item->IsEnabled() )
+        {
+            item->SetThickness( pcbIUScale.mmToIU( aPreset.m_copperThicknessMm[copperIndex++] ) );
+            item->SetMaterial( aPreset.m_manufacturer + wxT( " copper" ) );
+        }
+        else if( item->GetType() == BS_ITEM_TYPE_DIELECTRIC && item->IsEnabled() )
+        {
+            const size_t dielectricIndex = static_cast<size_t>( item->GetDielectricLayerId() - 1 );
+            const std::vector<PRESET_DIELECTRIC>& layers = aPreset.m_dielectrics[dielectricIndex];
+
+            while( item->GetSublayersCount() > static_cast<int>( layers.size() ) )
+                item->RemoveDielectricPrms( item->GetSublayersCount() - 1 );
+
+            while( item->GetSublayersCount() < static_cast<int>( layers.size() ) )
+                item->AddDielectricPrms( item->GetSublayersCount() );
+
+            const bool containsCore = std::any_of(
+                    layers.begin(), layers.end(),
+                    []( const PRESET_DIELECTRIC& aLayer ) { return aLayer.m_core; } );
+            item->SetTypeName( containsCore ? KEY_CORE : KEY_PREPREG );
+
+            for( size_t ii = 0; ii < layers.size(); ++ii )
+            {
+                const PRESET_DIELECTRIC& layer = layers[ii];
+                item->SetMaterial( aPreset.m_manufacturer + wxT( " " ) + layer.m_material, ii );
+                item->SetThickness( pcbIUScale.mmToIU( layer.m_thicknessMm ), ii );
+                item->SetEpsilonR( layer.m_epsilonR, ii );
+                item->SetLossTangent( 0.02, ii );
+                item->SetThicknessLocked( true, ii );
+            }
+        }
+    }
+
+    m_impedanceControlled->SetValue( true );
+    rebuildLayerStackPanel();
+    computeBoardThickness();
+    rebuildImpedanceRows();
+    updateImpedancePanelVisibility();
+    Layout();
+}
+
+
+void PANEL_SETUP_BOARD_STACKUP::saveImpedanceRowState()
+{
+    for( const IMPEDANCE_ROW& row : m_impedanceRows )
+    {
+        IMPEDANCE_STATE& state = m_impedanceState[row.m_layer];
+        state.m_structure = static_cast<IMPEDANCE_STRUCTURE>( row.m_structure->GetSelection() );
+        state.m_target = row.m_target->GetValue();
+        state.m_gap = row.m_gap->GetValue();
+    }
+}
+
+
+void PANEL_SETUP_BOARD_STACKUP::rebuildImpedanceRows()
+{
+    if( !m_impedanceGrid )
+        return;
+
+    saveImpedanceRowState();
+    m_impedanceRows.clear();
+    m_impedanceGrid->Clear( true );
+
+    const wxString headings[] = { _( "Layer" ), _( "Structure" ), _( "Target (Ω)" ),
+                                  _( "Spacing" ), _( "Width" ) };
+
+    for( const wxString& heading : headings )
+    {
+        wxStaticText* label = new wxStaticText( m_impedanceGridWindow, wxID_ANY, heading );
+        label->SetFont( label->GetFont().Bold() );
+        m_impedanceGrid->Add( label, 0, wxALIGN_CENTER_VERTICAL | wxBOTTOM, FromDIP( 2 ) );
+    }
+
+    wxArrayString structures;
+    structures.Add( _( "Microstrip" ) );
+    structures.Add( _( "Grounded CPW" ) );
+    structures.Add( _( "Coplanar" ) );
+    structures.Add( _( "Stripline" ) );
+    structures.Add( _( "Diff. microstrip" ) );
+    structures.Add( _( "Diff. stripline" ) );
+
+    for( BOARD_STACKUP_ROW_UI_ITEM& stackRow : m_rowUiItemsList )
+    {
+        BOARD_STACKUP_ITEM* item = stackRow.m_Item;
+
+        if( !stackRow.m_isEnabled || item->GetType() != BS_ITEM_TYPE_COPPER )
+            continue;
+
+        const PCB_LAYER_ID layer = item->GetBrdLayerId();
+        auto [stateIt, inserted] = m_impedanceState.try_emplace( layer );
+        IMPEDANCE_STATE& state = stateIt->second;
+
+        if( inserted )
+        {
+            const bool outer = layer == F_Cu || layer == B_Cu;
+            state.m_structure = outer ? IMPEDANCE_STRUCTURE::MICROSTRIP
+                                      : IMPEDANCE_STRUCTURE::STRIPLINE;
+            state.m_gap = m_frame->StringFromValue( pcbIUScale.mmToIU( 0.2 ), true );
+        }
+
+        wxStaticText* layerName = new wxStaticText( m_impedanceGridWindow, wxID_ANY,
+                                                     m_board->GetLayerName( layer ) );
+        wxChoice* structure = new wxChoice( m_impedanceGridWindow, wxID_ANY,
+                                             wxDefaultPosition, wxDefaultSize, structures );
+        structure->SetMinSize( wxSize( FromDIP( 100 ), -1 ) );
+        structure->SetSelection( static_cast<int>( state.m_structure ) );
+
+        wxTextCtrl* target = new wxTextCtrl( m_impedanceGridWindow, wxID_ANY, state.m_target,
+                                             wxDefaultPosition, wxSize( FromDIP( 45 ), -1 ) );
+        target->SetToolTip( _( "Target characteristic impedance in ohms" ) );
+
+        wxTextCtrl* gap = new wxTextCtrl( m_impedanceGridWindow, wxID_ANY, state.m_gap,
+                                          wxDefaultPosition, wxSize( FromDIP( 70 ), -1 ) );
+        gap->SetToolTip( _( "Copper-to-copper spacing for coplanar and differential traces" ) );
+
+        wxTextCtrl* width = new wxTextCtrl( m_impedanceGridWindow, wxID_ANY, wxEmptyString,
+                                            wxDefaultPosition, wxSize( FromDIP( 78 ), -1 ),
+                                            wxTE_READONLY | wxTE_RIGHT );
+        width->SetToolTip( _( "Calculated trace width" ) );
+
+        m_impedanceGrid->Add( layerName, 0, wxALIGN_CENTER_VERTICAL );
+        m_impedanceGrid->Add( structure, 1, wxEXPAND | wxALIGN_CENTER_VERTICAL );
+        m_impedanceGrid->Add( target, 0, wxALIGN_CENTER_VERTICAL );
+        m_impedanceGrid->Add( gap, 0, wxALIGN_CENTER_VERTICAL );
+        m_impedanceGrid->Add( width, 0, wxALIGN_CENTER_VERTICAL );
+
+        m_impedanceRows.push_back( { layer, structure, target, nullptr, gap, width } );
+
+        structure->Bind( wxEVT_CHOICE,
+                         [this, layer]( wxCommandEvent& ) { updateImpedanceRow( layer ); } );
+        target->Bind( wxEVT_TEXT,
+                      [this, layer]( wxCommandEvent& ) { updateImpedanceRow( layer ); } );
+        gap->Bind( wxEVT_TEXT,
+                   [this, layer]( wxCommandEvent& ) { updateImpedanceRow( layer ); } );
+    }
+
+    m_impedanceGridWindow->FitInside();
+    m_impedanceGridWindow->Layout();
+    updateAllImpedanceRows();
+}
+
+
+void PANEL_SETUP_BOARD_STACKUP::updateImpedancePanelVisibility()
+{
+    if( !m_impedancePanel )
+        return;
+
+    m_impedancePanel->Show( m_impedanceControlled->GetValue() );
+    m_sizerStackup->Layout();
+    Layout();
+}
+
+
+void PANEL_SETUP_BOARD_STACKUP::onImpedanceControlled( wxCommandEvent& aEvent )
+{
+    updateImpedancePanelVisibility();
+    aEvent.Skip();
+}
+
+
+void PANEL_SETUP_BOARD_STACKUP::onImpedanceParameterChanged( wxCommandEvent& aEvent )
+{
+    updateAllImpedanceRows();
+    aEvent.Skip();
+}
+
+
+std::optional<PANEL_SETUP_BOARD_STACKUP::TRACE_GEOMETRY>
+PANEL_SETUP_BOARD_STACKUP::getTraceGeometry( PCB_LAYER_ID aLayer ) const
+{
+    int copperRow = -1;
+
+    for( size_t ii = 0; ii < m_rowUiItemsList.size(); ++ii )
+    {
+        const BOARD_STACKUP_ROW_UI_ITEM& row = m_rowUiItemsList[ii];
+
+        if( row.m_isEnabled && row.m_Item->GetType() == BS_ITEM_TYPE_COPPER
+            && row.m_Item->GetBrdLayerId() == aLayer )
+        {
+            copperRow = static_cast<int>( ii );
+            break;
+        }
+    }
+
+    if( copperRow < 0 )
+        return std::nullopt;
+
+    auto dielectricInDirection =
+            [&]( int aDirection )
+            {
+                DIELECTRIC_GEOMETRY result;
+                double epsilonSum = 0.0;
+                double lossSum = 0.0;
+                bool foundReference = false;
+
+                for( int ii = copperRow + aDirection;
+                     ii >= 0 && ii < static_cast<int>( m_rowUiItemsList.size() );
+                     ii += aDirection )
+                {
+                    const BOARD_STACKUP_ROW_UI_ITEM& row = m_rowUiItemsList[ii];
+
+                    if( !row.m_isEnabled )
+                        continue;
+
+                    if( row.m_Item->GetType() == BS_ITEM_TYPE_COPPER )
+                    {
+                        foundReference = true;
+                        break;
+                    }
+
+                    if( row.m_Item->GetType() != BS_ITEM_TYPE_DIELECTRIC )
+                        continue;
+
+                    const wxTextCtrl* thicknessCtrl =
+                            dynamic_cast<const wxTextCtrl*>( row.m_ThicknessCtrl );
+                    const wxTextCtrl* epsilonCtrl =
+                            dynamic_cast<const wxTextCtrl*>( row.m_EpsilonCtrl );
+                    const wxTextCtrl* lossCtrl =
+                            dynamic_cast<const wxTextCtrl*>( row.m_LossTgCtrl );
+                    double epsilon = 0.0;
+                    double loss = 0.0;
+
+                    if( !thicknessCtrl || !epsilonCtrl
+                        || ( !epsilonCtrl->GetValue().ToDouble( &epsilon )
+                             && !epsilonCtrl->GetValue().ToCDouble( &epsilon ) ) )
+                    {
+                        continue;
+                    }
+
+                    if( lossCtrl )
+                    {
+                        if( !lossCtrl->GetValue().ToDouble( &loss ) )
+                            lossCtrl->GetValue().ToCDouble( &loss );
+                    }
+
+                    const double height = pcbIUScale.IUTomm(
+                            m_frame->ValueFromString( thicknessCtrl->GetValue() ) ) / 1000.0;
+
+                    if( height <= 0.0 || epsilon <= 0.0 )
+                        continue;
+
+                    result.m_height += height;
+                    epsilonSum += epsilon * height;
+                    lossSum += loss * height;
+                }
+
+                result.m_valid = foundReference && result.m_height > 0.0;
+
+                if( result.m_height > 0.0 )
+                {
+                    result.m_epsilonR = epsilonSum / result.m_height;
+                    result.m_lossTangent = lossSum / result.m_height;
+                }
+
+                return result;
+            };
+
+    TRACE_GEOMETRY geometry;
+    geometry.m_above = dielectricInDirection( -1 );
+    geometry.m_below = dielectricInDirection( 1 );
+
+    const wxTextCtrl* copperThickness = dynamic_cast<const wxTextCtrl*>(
+            m_rowUiItemsList[copperRow].m_ThicknessCtrl );
+
+    if( copperThickness )
+    {
+        geometry.m_copperThickness = pcbIUScale.IUTomm(
+                m_frame->ValueFromString( copperThickness->GetValue() ) ) / 1000.0;
+    }
+
+    return geometry;
+}
+
+
+static double ellipticK( double aModulus )
+{
+    aModulus = std::clamp( aModulus, 1e-12, 1.0 - 1e-12 );
+    double a = 1.0;
+    double b = std::sqrt( 1.0 - aModulus * aModulus );
+
+    for( int ii = 0; ii < 16 && std::abs( a - b ) > 1e-14; ++ii )
+    {
+        const double nextA = ( a + b ) / 2.0;
+        b = std::sqrt( a * b );
+        a = nextA;
+    }
+
+    return M_PI / ( 2.0 * a );
+}
+
+
+static double coplanarImpedance( double aWidth, double aGap, double aHeight,
+                                 double aEpsilonR, bool aGrounded )
+{
+    constexpr double Z_FREE_SPACE = 376.730313668;
+    const double k1 = aWidth / ( aWidth + 2.0 * aGap );
+    const double q1 = ellipticK( k1 ) / ellipticK( std::sqrt( 1.0 - k1 * k1 ) );
+    double epsilonEffective;
+    double factor;
+
+    if( aGrounded )
+    {
+        const double k3 = std::tanh( M_PI * aWidth / ( 4.0 * aHeight ) )
+                          / std::tanh( M_PI * ( aWidth + 2.0 * aGap )
+                                       / ( 4.0 * aHeight ) );
+        const double q3 = ellipticK( k3 ) / ellipticK( std::sqrt( 1.0 - k3 * k3 ) );
+        const double q = 1.0 / ( q1 + q3 );
+        epsilonEffective = 1.0 + q3 * q * ( aEpsilonR - 1.0 );
+        factor = Z_FREE_SPACE * q / 2.0;
+    }
+    else
+    {
+        const double k2 = std::sinh( M_PI * aWidth / ( 4.0 * aHeight ) )
+                          / std::sinh( M_PI * ( aWidth + 2.0 * aGap )
+                                       / ( 4.0 * aHeight ) );
+        const double q2 = ellipticK( k2 ) / ellipticK( std::sqrt( 1.0 - k2 * k2 ) );
+        epsilonEffective = 1.0 + ( aEpsilonR - 1.0 ) * q2 / ( 2.0 * q1 );
+        factor = Z_FREE_SPACE / ( 4.0 * q1 );
+    }
+
+    return factor / std::sqrt( epsilonEffective );
+}
+
+
+std::optional<double> PANEL_SETUP_BOARD_STACKUP::calculateTraceWidth(
+        const IMPEDANCE_ROW& aRow, wxString& aError ) const
+{
+    double target = 0.0;
+
+    if( ( !aRow.m_target->GetValue().ToDouble( &target )
+          && !aRow.m_target->GetValue().ToCDouble( &target ) ) || target <= 0.0 )
+    {
+        aError = _( "Target impedance must be greater than 0" );
+        return std::nullopt;
+    }
+
+    std::optional<TRACE_GEOMETRY> geometry = getTraceGeometry( aRow.m_layer );
+
+    if( !geometry )
+    {
+        aError = _( "Layer geometry is unavailable" );
+        return std::nullopt;
+    }
+
+    const IMPEDANCE_STRUCTURE structure = static_cast<IMPEDANCE_STRUCTURE>(
+            aRow.m_structure->GetSelection() );
+    const bool microstrip = structure == IMPEDANCE_STRUCTURE::MICROSTRIP
+                            || structure == IMPEDANCE_STRUCTURE::GROUNDED_COPLANAR
+                            || structure == IMPEDANCE_STRUCTURE::COPLANAR
+                            || structure == IMPEDANCE_STRUCTURE::DIFF_MICROSTRIP;
+    const DIELECTRIC_GEOMETRY* substrate = nullptr;
+
+    if( microstrip )
+    {
+        if( aRow.m_layer == F_Cu )
+            substrate = &geometry->m_below;
+        else if( aRow.m_layer == B_Cu )
+            substrate = &geometry->m_above;
+        else if( geometry->m_above.m_valid && geometry->m_below.m_valid )
+            substrate = geometry->m_above.m_height <= geometry->m_below.m_height
+                                ? &geometry->m_above : &geometry->m_below;
+
+        if( !substrate || !substrate->m_valid )
+        {
+            aError = _( "A dielectric and reference copper layer are required" );
+            return std::nullopt;
+        }
+    }
+    else if( !geometry->m_above.m_valid || !geometry->m_below.m_valid )
+    {
+        aError = _( "Stripline requires reference copper above and below" );
+        return std::nullopt;
+    }
+
+    double gap = 0.0;
+    const bool usesGap = structure == IMPEDANCE_STRUCTURE::GROUNDED_COPLANAR
+                         || structure == IMPEDANCE_STRUCTURE::COPLANAR
+                         || structure == IMPEDANCE_STRUCTURE::DIFF_MICROSTRIP
+                         || structure == IMPEDANCE_STRUCTURE::DIFF_STRIPLINE;
+
+    if( usesGap )
+    {
+        gap = pcbIUScale.IUTomm( m_frame->ValueFromString( aRow.m_gap->GetValue() ) ) / 1000.0;
+
+        if( gap <= 0.0 )
+        {
+            aError = _( "Spacing must be greater than 0" );
+            return std::nullopt;
+        }
+    }
+
+    if( structure == IMPEDANCE_STRUCTURE::GROUNDED_COPLANAR
+        || structure == IMPEDANCE_STRUCTURE::COPLANAR )
+    {
+        double low = 1e-7;
+        double high = std::max( 0.02, substrate->m_height * 100.0 );
+        const bool grounded = structure == IMPEDANCE_STRUCTURE::GROUNDED_COPLANAR;
+
+        if( coplanarImpedance( low, gap, substrate->m_height,
+                               substrate->m_epsilonR, grounded ) < target
+            || coplanarImpedance( high, gap, substrate->m_height,
+                                  substrate->m_epsilonR, grounded ) > target )
+        {
+            aError = _( "No practical width was found for this geometry" );
+            return std::nullopt;
+        }
+
+        for( int ii = 0; ii < 80; ++ii )
+        {
+            const double mid = ( low + high ) / 2.0;
+
+            if( coplanarImpedance( mid, gap, substrate->m_height,
+                                   substrate->m_epsilonR, grounded ) > target )
+                low = mid;
+            else
+                high = mid;
+        }
+
+        return ( low + high ) / 2.0;
+    }
+
+    constexpr double FREQUENCY = 1.0e9;
+    constexpr double COPPER_RESISTIVITY = 1.72e-8;
+    constexpr double MU_0 = 1.25663706212e-6;
+    const double sigma = 1.0 / COPPER_RESISTIVITY;
+    const double skinDepth = std::sqrt( COPPER_RESISTIVITY / ( M_PI * FREQUENCY * MU_0 ) );
+    const bool differential = structure == IMPEDANCE_STRUCTURE::DIFF_MICROSTRIP
+                              || structure == IMPEDANCE_STRUCTURE::DIFF_STRIPLINE;
+    std::unique_ptr<TRANSLINE_CALCULATION_BASE> calculator;
+
+    if( structure == IMPEDANCE_STRUCTURE::MICROSTRIP )
+        calculator = std::make_unique<MICROSTRIP>();
+    else if( structure == IMPEDANCE_STRUCTURE::STRIPLINE )
+        calculator = std::make_unique<STRIPLINE>();
+    else if( structure == IMPEDANCE_STRUCTURE::DIFF_MICROSTRIP )
+        calculator = std::make_unique<COUPLED_MICROSTRIP>();
+    else
+        calculator = std::make_unique<COUPLED_STRIPLINE>();
+
+    const double epsilon = microstrip
+                                   ? substrate->m_epsilonR
+                                   : ( geometry->m_above.m_epsilonR * geometry->m_above.m_height
+                                       + geometry->m_below.m_epsilonR * geometry->m_below.m_height )
+                                             / ( geometry->m_above.m_height
+                                                 + geometry->m_below.m_height );
+    const double loss = microstrip
+                                ? substrate->m_lossTangent
+                                : ( geometry->m_above.m_lossTangent * geometry->m_above.m_height
+                                    + geometry->m_below.m_lossTangent * geometry->m_below.m_height )
+                                          / ( geometry->m_above.m_height
+                                              + geometry->m_below.m_height );
+
+    calculator->SetParameter( TRANSLINE_PARAMETERS::EPSILONR, epsilon );
+    calculator->SetParameter( TRANSLINE_PARAMETERS::T, geometry->m_copperThickness );
+    calculator->SetParameter( TRANSLINE_PARAMETERS::PHYS_WIDTH, 1e-4 );
+    calculator->SetParameter( TRANSLINE_PARAMETERS::PHYS_LEN, 0.01 );
+    calculator->SetParameter( TRANSLINE_PARAMETERS::FREQUENCY, FREQUENCY );
+    calculator->SetParameter( TRANSLINE_PARAMETERS::SIGMA, sigma );
+    calculator->SetParameter( TRANSLINE_PARAMETERS::SKIN_DEPTH, skinDepth );
+    calculator->SetParameter( TRANSLINE_PARAMETERS::ANG_L, 1.0 );
+    calculator->SetParameter( TRANSLINE_PARAMETERS::MURC, 1.0 );
+
+    if( structure == IMPEDANCE_STRUCTURE::MICROSTRIP
+        || structure == IMPEDANCE_STRUCTURE::DIFF_MICROSTRIP )
+    {
+        calculator->SetParameter( TRANSLINE_PARAMETERS::H, substrate->m_height );
+        calculator->SetParameter( TRANSLINE_PARAMETERS::H_T, 1e20 );
+        calculator->SetParameter( TRANSLINE_PARAMETERS::ROUGH, 0.0 );
+        calculator->SetParameter( TRANSLINE_PARAMETERS::TAND, loss );
+
+        if( structure == IMPEDANCE_STRUCTURE::MICROSTRIP )
+            calculator->SetParameter( TRANSLINE_PARAMETERS::MUR, 1.0 );
+    }
+    else if( structure == IMPEDANCE_STRUCTURE::STRIPLINE )
+    {
+        calculator->SetParameter( TRANSLINE_PARAMETERS::STRIPLINE_A,
+                                  geometry->m_above.m_height );
+        calculator->SetParameter( TRANSLINE_PARAMETERS::H,
+                                  geometry->m_above.m_height + geometry->m_copperThickness
+                                          + geometry->m_below.m_height );
+        calculator->SetParameter( TRANSLINE_PARAMETERS::TAND, loss );
+    }
+    else
+    {
+        calculator->SetParameter( TRANSLINE_PARAMETERS::H,
+                                  geometry->m_above.m_height + geometry->m_copperThickness
+                                          + geometry->m_below.m_height );
+    }
+
+    if( differential )
+    {
+        calculator->SetParameter( TRANSLINE_PARAMETERS::Z0_E, target / 2.0 );
+        calculator->SetParameter( TRANSLINE_PARAMETERS::Z0_O, target / 2.0 );
+        calculator->SetParameter( TRANSLINE_PARAMETERS::Z_DIFF, target );
+        calculator->SetParameter( TRANSLINE_PARAMETERS::PHYS_S, gap );
+    }
+    else
+    {
+        calculator->SetParameter( TRANSLINE_PARAMETERS::Z0, target );
+    }
+
+    const SYNTHESIZE_OPTS opts = differential ? SYNTHESIZE_OPTS::FIX_SPACING
+                                                : SYNTHESIZE_OPTS::DEFAULT;
+
+    if( !calculator->Synthesize( opts ) )
+    {
+        aError = _( "Width calculation did not converge" );
+        return std::nullopt;
+    }
+
+    auto& results = calculator->GetSynthesisResults();
+    auto widthResult = results.find( TRANSLINE_PARAMETERS::PHYS_WIDTH );
+
+    if( widthResult == results.end() || widthResult->second.second != TRANSLINE_STATUS::OK
+        || !std::isfinite( widthResult->second.first ) || widthResult->second.first <= 0.0 )
+    {
+        aError = _( "No practical width was found for this geometry" );
+        return std::nullopt;
+    }
+
+    return widthResult->second.first;
+}
+
+
+void PANEL_SETUP_BOARD_STACKUP::updateImpedanceRow( PCB_LAYER_ID aLayer )
+{
+    auto rowIt = std::find_if( m_impedanceRows.begin(), m_impedanceRows.end(),
+                               [aLayer]( const IMPEDANCE_ROW& aRow )
+                               {
+                                   return aRow.m_layer == aLayer;
+                               } );
+
+    if( rowIt == m_impedanceRows.end() )
+        return;
+
+    const IMPEDANCE_STRUCTURE structure = static_cast<IMPEDANCE_STRUCTURE>(
+            rowIt->m_structure->GetSelection() );
+    const bool usesGap = structure == IMPEDANCE_STRUCTURE::GROUNDED_COPLANAR
+                         || structure == IMPEDANCE_STRUCTURE::COPLANAR
+                         || structure == IMPEDANCE_STRUCTURE::DIFF_MICROSTRIP
+                         || structure == IMPEDANCE_STRUCTURE::DIFF_STRIPLINE;
+    rowIt->m_gap->Enable( usesGap );
+
+    wxString error;
+    std::optional<double> width = calculateTraceWidth( *rowIt, error );
+
+    if( width )
+    {
+        const int widthIU = pcbIUScale.mmToIU( *width * 1000.0 );
+        rowIt->m_width->ChangeValue( m_frame->StringFromValue( widthIU, true ) );
+        rowIt->m_width->SetToolTip( _( "Calculated trace width" ) );
+    }
+    else
+    {
+        rowIt->m_width->ChangeValue( wxT( "—" ) );
+        rowIt->m_width->SetToolTip( error );
+    }
+}
+
+
+void PANEL_SETUP_BOARD_STACKUP::updateAllImpedanceRows()
+{
+    for( const IMPEDANCE_ROW& row : m_impedanceRows )
+        updateImpedanceRow( row.m_layer );
 }
 
 
@@ -1712,5 +2627,3 @@ void drawBitmap( wxBitmap& aBitmap, wxColor aColor )
         p.OffsetY( data, 1 );
     }
 }
-
-

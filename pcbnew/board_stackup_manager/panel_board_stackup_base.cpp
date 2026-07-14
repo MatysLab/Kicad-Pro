@@ -16,7 +16,6 @@ PANEL_SETUP_BOARD_STACKUP_BASE::PANEL_SETUP_BOARD_STACKUP_BASE( wxWindow* parent
 	wxBoxSizer* bMainSizer;
 	bMainSizer = new wxBoxSizer( wxVERTICAL );
 
-	wxBoxSizer* bTopSizer;
 	bTopSizer = new wxBoxSizer( wxHORIZONTAL );
 
 	m_lblCopperLayers = new wxStaticText( this, wxID_ANY, _("Copper layers:"), wxDefaultPosition, wxDefaultSize, 0 );
@@ -37,7 +36,7 @@ PANEL_SETUP_BOARD_STACKUP_BASE::PANEL_SETUP_BOARD_STACKUP_BASE( wxWindow* parent
 	bTopSizer->Add( 40, 0, 1, wxEXPAND, 5 );
 
 	m_impedanceControlled = new wxCheckBox( this, wxID_ANY, _("Impedance controlled"), wxDefaultPosition, wxDefaultSize, 0 );
-	m_impedanceControlled->SetToolTip( _("If Impedance Controlled option is set,\nLoss tangent and EpsilonR will be added to constraints.") );
+	m_impedanceControlled->SetToolTip( _("Enable controlled-impedance trace width calculations using the board stackup.\nLoss tangent and Epsilon R will also be included in fabrication constraints.") );
 
 	bTopSizer->Add( m_impedanceControlled, 0, wxALL|wxALIGN_CENTER_VERTICAL, 5 );
 
@@ -53,7 +52,6 @@ PANEL_SETUP_BOARD_STACKUP_BASE::PANEL_SETUP_BOARD_STACKUP_BASE( wxWindow* parent
 
 	bMainSizer->Add( bTopSizer, 0, wxEXPAND|wxALL, 5 );
 
-	wxBoxSizer* m_sizerStackup;
 	m_sizerStackup = new wxBoxSizer( wxVERTICAL );
 
 	m_panel1 = new WX_PANEL( this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL );

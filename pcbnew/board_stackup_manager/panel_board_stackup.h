@@ -27,6 +27,8 @@
 
 
 #include <board.h>
+#include <map>
+#include <optional>
 #include <widgets/unit_binder.h>
 #include <wx/gdicmn.h>
 
@@ -38,6 +40,11 @@
 class wxBitmapComboBox;
 class PANEL_SETUP_LAYERS;
 class PANEL_SETUP_BOARD_FINISH;
+class wxFlexGridSizer;
+class wxPanel;
+class wxScrolledWindow;
+class wxStaticText;
+class wxTextCtrl;
 
 
 // A helper class to handle UI items managed by m_fgGridSizer
@@ -120,6 +127,81 @@ public:
     bool TransferDataFromWindow() override;
 
 private:
+    enum class IMPEDANCE_STRUCTURE
+    {
+        MICROSTRIP,
+        GROUNDED_COPLANAR,
+        COPLANAR,
+        STRIPLINE,
+        DIFF_MICROSTRIP,
+        DIFF_STRIPLINE
+    };
+
+    struct IMPEDANCE_STATE
+    {
+        IMPEDANCE_STRUCTURE m_structure = IMPEDANCE_STRUCTURE::MICROSTRIP;
+        wxString            m_target = wxT( "50" );
+        wxString            m_gap;
+    };
+
+    struct IMPEDANCE_ROW
+    {
+        PCB_LAYER_ID  m_layer;
+        wxChoice*     m_structure;
+        wxTextCtrl*   m_target;
+        wxStaticText* m_gapLabel;
+        wxTextCtrl*   m_gap;
+        wxTextCtrl*   m_width;
+    };
+
+    struct DIELECTRIC_GEOMETRY
+    {
+        double m_height = 0.0;
+        double m_epsilonR = 0.0;
+        double m_lossTangent = 0.0;
+        bool   m_valid = false;
+    };
+
+    struct TRACE_GEOMETRY
+    {
+        DIELECTRIC_GEOMETRY m_above;
+        DIELECTRIC_GEOMETRY m_below;
+        double              m_copperThickness = 0.0;
+    };
+
+    struct PRESET_DIELECTRIC
+    {
+        wxString m_material;
+        double   m_thicknessMm;
+        double   m_epsilonR;
+        bool     m_core;
+    };
+
+    struct STACKUP_PRESET
+    {
+        wxString                                    m_manufacturer;
+        wxString                                    m_name;
+        std::vector<double>                         m_copperThicknessMm;
+        std::vector<std::vector<PRESET_DIELECTRIC>> m_dielectrics;
+    };
+
+    void buildImpedancePanel();
+    void buildStackupPresetControls();
+    void rebuildImpedanceRows();
+    void saveImpedanceRowState();
+    void updateImpedancePanelVisibility();
+    void updateImpedanceRow( PCB_LAYER_ID aLayer );
+    void updateAllImpedanceRows();
+    void onImpedanceControlled( wxCommandEvent& aEvent );
+    void onImpedanceParameterChanged( wxCommandEvent& aEvent );
+    void onApplyStackupPreset( wxCommandEvent& aEvent );
+    void rebuildPresetChoices();
+    void applyStackupPreset( const STACKUP_PRESET& aPreset );
+    static const std::vector<STACKUP_PRESET>& getStackupPresets();
+    std::optional<TRACE_GEOMETRY> getTraceGeometry( PCB_LAYER_ID aLayer ) const;
+    std::optional<double> calculateTraceWidth( const IMPEDANCE_ROW& aRow,
+                                                wxString& aError ) const;
+
     /** Creates the controls in a BOARD_STACKUP_ROW_UI_ITEM relative to the aStackupItem.
      * @return a BOARD_STACKUP_ROW_UI_ITEM filled with corresponding widgets
      * @param aRow is the row index in the row list
@@ -258,6 +340,14 @@ private:
 
     std::vector<wxControl*> m_controlItemsList;     // List of ctrls (wxChoice, wxTextCtrl, etc.)
                                                     //   with added event handlers
+
+    wxPanel*                         m_impedancePanel = nullptr;
+    wxChoice*                        m_stackupPreset = nullptr;
+    wxScrolledWindow*                m_impedanceGridWindow = nullptr;
+    wxFlexGridSizer*                 m_impedanceGrid = nullptr;
+    std::vector<IMPEDANCE_ROW>       m_impedanceRows;
+    std::map<PCB_LAYER_ID, IMPEDANCE_STATE> m_impedanceState;
+    std::vector<const STACKUP_PRESET*> m_visibleStackupPresets;
 };
 
 #endif      // #ifndef PANEL_SETUP_BOARD_STACKUP_H
