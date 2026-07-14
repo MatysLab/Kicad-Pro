@@ -134,7 +134,7 @@ jobs:
             --build-context kicad-src="$SOURCE_DIR" \
             --build-arg BUILDKIT_CONTEXT_KEEP_GIT_DIR=1 \
             --build-arg REGISTRY=registry.gitlab.com/kicad/packaging/kicad-appimage \
-            --build-arg KICAD_BUILD_RELEASE=10.0.4-preview.3 \
+            --build-arg KICAD_BUILD_RELEASE=10.0.5-rc1-preview.4 \
             --build-arg KICAD_BUILD_MAJVERSION=10 \
             --build-arg KICAD_BUILD_TYPE=Release \
             --build-arg APPIMAGE_PREFIX=kicad-pro \
