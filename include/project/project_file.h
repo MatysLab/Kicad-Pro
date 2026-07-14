@@ -207,6 +207,9 @@ public:
     /// Drawing sheet file
     wxString m_BoardDrawingSheetFile;
 
+    /// Per-layer controlled-impedance targets and calculated routing widths.
+    wxString m_BoardStackupControl;
+
     /// MRU path storage
     wxString m_PcbLastPath[LAST_PATH_SIZE];
 

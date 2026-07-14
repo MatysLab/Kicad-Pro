@@ -1825,6 +1825,19 @@ void PCB_EDIT_FRAME::SetActiveLayer( PCB_LAYER_ID aLayer, bool aForceRedraw )
 
     PCB_BASE_FRAME::SetActiveLayer( aLayer );
 
+    if( GetDesignSettings().UseActiveLayerImpedanceTrackWidth() )
+    {
+        if( std::optional<ACTIVE_LAYER_IMPEDANCE_WIDTH> width =
+                    GetActiveLayerImpedanceTrackWidth() )
+        {
+            GetDesignSettings().SetActiveLayerImpedanceTrackWidth( width->m_width );
+        }
+        else
+            GetDesignSettings().UseActiveLayerImpedanceTrackWidth( false );
+    }
+
+    UpdateTrackWidthSelectBox( m_SelTrackWidthBox, true, true );
+
     m_appearancePanel->OnLayerChanged();
 
     m_toolManager->PostAction( PCB_ACTIONS::layerChanged );  // notify other tools

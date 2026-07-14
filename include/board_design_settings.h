@@ -356,6 +356,27 @@ public:
     inline void SetCustomTrackWidth( int aWidth ) { m_customTrackWidth = aWidth; }
     inline int GetCustomTrackWidth() const { return m_customTrackWidth; }
 
+    /** Use the controlled-impedance width associated with the editor's active copper layer. */
+    inline void SetActiveLayerImpedanceTrackWidth( int aWidth )
+    {
+        m_activeLayerImpedanceTrackWidth = aWidth;
+    }
+
+    inline int GetActiveLayerImpedanceTrackWidth() const
+    {
+        return m_activeLayerImpedanceTrackWidth;
+    }
+
+    inline void UseActiveLayerImpedanceTrackWidth( bool aEnabled )
+    {
+        m_useActiveLayerImpedanceTrackWidth = aEnabled;
+    }
+
+    inline bool UseActiveLayerImpedanceTrackWidth() const
+    {
+        return m_useActiveLayerImpedanceTrackWidth;
+    }
+
     /**
      * @return the current via size list index.
      */
@@ -435,6 +456,9 @@ public:
     inline void UseCustomTrackViaSize( bool aEnabled )
     {
         m_useCustomTrackVia = aEnabled;
+
+        if( aEnabled )
+            m_useActiveLayerImpedanceTrackWidth = false;
     }
 
     /**
@@ -805,6 +829,11 @@ private:
     bool       m_useCustomTrackVia;
     int        m_customTrackWidth;
     VIA_DIMENSION m_customViaSize;
+
+    // Runtime routing override populated from the controlled-impedance stackup for the
+    // currently active copper layer. It is intentionally separate from custom via sizing.
+    bool       m_useActiveLayerImpedanceTrackWidth;
+    int        m_activeLayerImpedanceTrackWidth;
 
     // Custom values for differential pairs (specified via dialog instead of netclass/lists)
     bool       m_useCustomDiffPair;

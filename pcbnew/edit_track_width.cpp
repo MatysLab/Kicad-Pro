@@ -100,12 +100,14 @@ void PCB_EDIT_FRAME::Tracks_and_Vias_Size_Event( wxCommandEvent& event )
     switch( id )
     {
     case ID_POPUP_PCB_SELECT_USE_NETCLASS_VALUES:
+        GetDesignSettings().UseActiveLayerImpedanceTrackWidth( false );
         GetDesignSettings().m_UseConnectedTrackWidth = false;
         GetDesignSettings().SetTrackWidthIndex( 0 );
         GetDesignSettings().SetViaSizeIndex( 0 );
         break;
 
     case ID_POPUP_PCB_SELECT_AUTO_WIDTH:
+        GetDesignSettings().UseActiveLayerImpedanceTrackWidth( false );
         GetDesignSettings().m_UseConnectedTrackWidth = true;
         break;
 
@@ -125,6 +127,7 @@ void PCB_EDIT_FRAME::Tracks_and_Vias_Size_Event( wxCommandEvent& event )
     case ID_POPUP_PCB_SELECT_WIDTH14:
     case ID_POPUP_PCB_SELECT_WIDTH15:
     case ID_POPUP_PCB_SELECT_WIDTH16:
+        GetDesignSettings().UseActiveLayerImpedanceTrackWidth( false );
         GetDesignSettings().m_UseConnectedTrackWidth = false;
         ii = id - ID_POPUP_PCB_SELECT_WIDTH1;
         GetDesignSettings().SetTrackWidthIndex( ii );
@@ -154,14 +157,31 @@ void PCB_EDIT_FRAME::Tracks_and_Vias_Size_Event( wxCommandEvent& event )
     case ID_AUX_TOOLBAR_PCB_TRACK_WIDTH:
         ii = m_SelTrackWidthBox->GetSelection();
 
-        if( ii == int( m_SelTrackWidthBox->GetCount() - 2 ) )
+        if( ii == m_activeLayerImpedanceWidthChoice )
+        {
+            if( std::optional<ACTIVE_LAYER_IMPEDANCE_WIDTH> width =
+                        GetActiveLayerImpedanceTrackWidth() )
+            {
+                GetDesignSettings().SetActiveLayerImpedanceTrackWidth( width->m_width );
+                GetDesignSettings().UseActiveLayerImpedanceTrackWidth( true );
+                GetDesignSettings().m_UseConnectedTrackWidth = false;
+                GetDesignSettings().m_TempOverrideTrackWidth = true;
+            }
+        }
+        else if( ii == int( m_SelTrackWidthBox->GetCount() - 2 ) )
         {
             // this is the separator
-            m_SelTrackWidthBox->SetSelection( GetDesignSettings().GetTrackWidthIndex() );
+            m_SelTrackWidthBox->SetSelection(
+                    GetDesignSettings().UseActiveLayerImpedanceTrackWidth()
+                            ? m_activeLayerImpedanceWidthChoice
+                            : GetDesignSettings().GetTrackWidthIndex() );
         }
         else if( ii == int( m_SelTrackWidthBox->GetCount() - 1 ) )
         {
-            m_SelTrackWidthBox->SetSelection( GetDesignSettings().GetTrackWidthIndex() );
+            m_SelTrackWidthBox->SetSelection(
+                    GetDesignSettings().UseActiveLayerImpedanceTrackWidth()
+                            ? m_activeLayerImpedanceWidthChoice
+                            : GetDesignSettings().GetTrackWidthIndex() );
 
             // Best-guess fix for issue #23708 (crash on dialog OK reported on
             // Flatpak/FreeBSD, not reproduced locally). Suspected cause is that
@@ -175,6 +195,7 @@ void PCB_EDIT_FRAME::Tracks_and_Vias_Size_Event( wxCommandEvent& event )
         }
         else
         {
+            GetDesignSettings().UseActiveLayerImpedanceTrackWidth( false );
             GetDesignSettings().SetTrackWidthIndex( ii );
             GetDesignSettings().m_TempOverrideTrackWidth = true;
         }

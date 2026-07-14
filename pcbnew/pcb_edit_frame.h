@@ -24,6 +24,7 @@
 #include "pcb_base_edit_frame.h"
 #include "zones.h"
 #include <mail_type.h>
+#include <optional>
 #include <settings/app_settings.h>
 #include <variant>
 
@@ -166,6 +167,13 @@ public:
 
     void UpdateTrackWidthSelectBox( wxChoice* aTrackWidthSelectBox, bool aShowNetclass,
                                     bool aShowEdit );
+    struct ACTIVE_LAYER_IMPEDANCE_WIDTH
+    {
+        int    m_width;
+        double m_targetOhms;
+    };
+
+    std::optional<ACTIVE_LAYER_IMPEDANCE_WIDTH> GetActiveLayerImpedanceTrackWidth() const;
     void UpdateViaSizeSelectBox( wxChoice* aViaSizeSelectBox, bool aShowNetclass, bool aShowEdit );
 
     /**
@@ -856,6 +864,8 @@ public:
 private:
     friend struct PCB::IFACE;
     friend class APPEARANCE_CONTROLS;
+
+    int m_activeLayerImpedanceWidthChoice = -1;
 
     /**
      * The export board netlist tool action object.

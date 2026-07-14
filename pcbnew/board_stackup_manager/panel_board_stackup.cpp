@@ -63,6 +63,7 @@
 #include <cmath>
 #include <memory>
 #include <nlohmann/json.hpp>
+#include <project/project_file.h>
 #include <stdexcept>
 
 
@@ -1603,14 +1604,12 @@ bool PANEL_SETUP_BOARD_STACKUP::TransferDataFromWindow()
         modified = true;
     }
 
-    std::map<wxString, wxString> boardProperties = m_board->GetProperties();
     const wxString projectSettings = serializeProjectImpedanceSettings();
-    auto property = boardProperties.find( KICAD_PRO_STACKUP_PROPERTY );
+    wxString& storedSettings = m_frame->Prj().GetProjectFile().m_BoardStackupControl;
 
-    if( property == boardProperties.end() || property->second != projectSettings )
+    if( storedSettings != projectSettings )
     {
-        boardProperties[KICAD_PRO_STACKUP_PROPERTY] = projectSettings;
-        m_board->SetProperties( boardProperties );
+        storedSettings = projectSettings;
         modified = true;
     }
 
@@ -2361,12 +2360,27 @@ wxString PANEL_SETUP_BOARD_STACKUP::serializeProjectImpedanceSettings()
         const double spacingMm = pcbIUScale.IUTomm(
                 m_frame->ValueFromString( state.m_gap ) );
 
-        root["layers"].push_back( {
+        nlohmann::json layerSettings = {
             { "layer", static_cast<int>( layer ) },
             { "structure", structure },
             { "target_ohms", std::string( state.m_target.utf8_str() ) },
             { "spacing_mm", spacingMm }
-        } );
+        };
+
+        const auto row = std::find_if(
+                m_impedanceRows.begin(), m_impedanceRows.end(),
+                [layer]( const IMPEDANCE_ROW& aRow ) { return aRow.m_layer == layer; } );
+
+        if( row != m_impedanceRows.end() )
+        {
+            wxString error;
+            std::optional<double> width = calculateTraceWidth( *row, error );
+
+            if( width )
+                layerSettings["width_mm"] = *width * 1000.0;
+        }
+
+        root["layers"].push_back( std::move( layerSettings ) );
     }
 
     return wxString::FromUTF8( root.dump() );
@@ -2375,15 +2389,25 @@ wxString PANEL_SETUP_BOARD_STACKUP::serializeProjectImpedanceSettings()
 
 void PANEL_SETUP_BOARD_STACKUP::loadProjectImpedanceSettings()
 {
-    const auto property = m_board->GetProperties().find( KICAD_PRO_STACKUP_PROPERTY );
+    wxString projectSettings = m_frame->Prj().GetProjectFile().m_BoardStackupControl;
 
-    if( property == m_board->GetProperties().end() )
-        return;
+    // Read the original board-property location once for projects created before the
+    // dedicated project setting was introduced. Board properties are synchronized from
+    // text variables and cannot reliably retain private PCB Editor state.
+    if( projectSettings.IsEmpty() )
+    {
+        const auto property = m_board->GetProperties().find( KICAD_PRO_STACKUP_PROPERTY );
+
+        if( property == m_board->GetProperties().end() )
+            return;
+
+        projectSettings = property->second;
+    }
 
     try
     {
         const nlohmann::json root = nlohmann::json::parse(
-                std::string( property->second.utf8_str() ) );
+                std::string( projectSettings.utf8_str() ) );
 
         if( root.value( "format", "" ) != "kicad-pro-project-stackup"
             || root.value( "version", 0 ) != 1 )
