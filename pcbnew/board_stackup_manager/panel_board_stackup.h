@@ -32,6 +32,7 @@
 #include <string>
 #include <widgets/unit_binder.h>
 #include <wx/gdicmn.h>
+#include <wx/timer.h>
 
 #include "panel_board_stackup_base.h"
 #include "board_stackup.h"
@@ -200,6 +201,7 @@ private:
     void updateImpedancePanelVisibility();
     void updateImpedanceRow( PCB_LAYER_ID aLayer );
     void updateAllImpedanceRows();
+    void scheduleImpedanceUpdate();
     void onImpedanceControlled( wxCommandEvent& aEvent );
     void onImpedanceParameterChanged( wxCommandEvent& aEvent );
     void onApplyStackupPreset( wxCommandEvent& aEvent );
@@ -363,6 +365,7 @@ private:
     wxScrolledWindow*                m_impedanceGridWindow = nullptr;
     wxFlexGridSizer*                 m_impedanceGrid = nullptr;
     wxStaticText*                    m_impedanceWidthHeading = nullptr;
+    wxTimer                          m_impedanceUpdateTimer;
     std::vector<IMPEDANCE_ROW>       m_impedanceRows;
     std::map<PCB_LAYER_ID, IMPEDANCE_STATE> m_impedanceState;
     std::vector<const STACKUP_PRESET*> m_visibleStackupPresets;

@@ -352,12 +352,16 @@ PANEL_SETUP_BOARD_STACKUP::PANEL_SETUP_BOARD_STACKUP( wxWindow* aParentWindow,
     buildImpedancePanel();
     loadProjectImpedanceSettings();
 
+    m_impedanceUpdateTimer.Bind( wxEVT_TIMER,
+                                 [this]( wxTimerEvent& ) { updateAllImpedanceRows(); } );
+
     m_frame->Bind( EDA_EVT_UNITS_CHANGED, &PANEL_SETUP_BOARD_STACKUP::onUnitsChanged, this );
 }
 
 
 PANEL_SETUP_BOARD_STACKUP::~PANEL_SETUP_BOARD_STACKUP()
 {
+    m_impedanceUpdateTimer.Stop();
     disconnectEvents();
 }
 
@@ -777,7 +781,14 @@ void PANEL_SETUP_BOARD_STACKUP::setDefaultLayerWidths( int targetThickness )
     int prePregThickness = prePregDefaultThickness;
     int coreThickness = remainingWidth / coreLayerCount;
 
-    if( coreThickness < prePregThickness )
+    if( remainingWidth <= 0 )
+    {
+        // Locked manufacturer presets may already consume the requested board thickness.
+        // When more copper layers are added, keep the new dielectrics physically usable and
+        // allow the resulting board thickness to grow instead of creating 0-thickness layers.
+        prePregThickness = coreThickness = prePregDefaultThickness;
+    }
+    else if( coreThickness < prePregThickness )
     {
         // There's not enough room for prepreg and core layers of at least 0.1 mm, so adjust both down
         remainingWidth = targetThickness - totalWidthOfFixedItems;
@@ -813,10 +824,13 @@ void PANEL_SETUP_BOARD_STACKUP::setDefaultLayerWidths( int targetThickness )
 
         wxTextCtrl* textCtrl = static_cast<wxTextCtrl*>( ui_item.m_ThicknessCtrl );
         layerType->SetSelection( currentLayerIsCore ? 0 : 1 );
-        textCtrl->SetValue( m_frame->StringFromValue( layerThickness ) );
+        textCtrl->ChangeValue( m_frame->StringFromValue( layerThickness ) );
+        item->SetThickness( layerThickness, ui_item.m_SubItem );
 
         currentLayerIsCore = !currentLayerIsCore;
     }
+
+    updateStackupRowColors();
 }
 
 
@@ -842,8 +856,6 @@ int PANEL_SETUP_BOARD_STACKUP::computeBoardThickness()
     // The text in the event will translate to the value for the text control
     // and is only updated if it changed
     m_tcCTValue->ChangeValue( thicknessStr );
-    updateStackupRowColors();
-
     return thickness;
 }
 
@@ -1835,7 +1847,7 @@ void PANEL_SETUP_BOARD_STACKUP::onThicknessChange( wxCommandEvent& event )
     item->SetThickness( m_frame->ValueFromString( value ), idx );
 
     computeBoardThickness();
-    updateAllImpedanceRows();
+    scheduleImpedanceUpdate();
 }
 
 
@@ -2467,6 +2479,7 @@ void PANEL_SETUP_BOARD_STACKUP::rebuildImpedanceRows()
     if( !m_impedanceGrid )
         return;
 
+    m_impedanceUpdateTimer.Stop();
     saveImpedanceRowState();
     m_impedanceRows.clear();
     m_impedanceWidthHeading = nullptr;
@@ -2580,8 +2593,16 @@ void PANEL_SETUP_BOARD_STACKUP::onImpedanceControlled( wxCommandEvent& aEvent )
 
 void PANEL_SETUP_BOARD_STACKUP::onImpedanceParameterChanged( wxCommandEvent& aEvent )
 {
-    updateAllImpedanceRows();
+    scheduleImpedanceUpdate();
     aEvent.Skip();
+}
+
+
+void PANEL_SETUP_BOARD_STACKUP::scheduleImpedanceUpdate()
+{
+    // Text fields emit an event for every keystroke and bulk stackup operations can update
+    // several controls together. Coalesce them into one calculation pass.
+    m_impedanceUpdateTimer.StartOnce( 75 );
 }
 
 
@@ -2794,13 +2815,13 @@ std::optional<double> PANEL_SETUP_BOARD_STACKUP::calculateTraceWidth(
 
         if( !substrate || !substrate->m_valid )
         {
-            aError = _( "A dielectric and reference copper layer are required" );
+            aError = _( "A positive dielectric thickness and reference copper layer are required" );
             return std::nullopt;
         }
     }
     else if( !geometry->m_above.m_valid || !geometry->m_below.m_valid )
     {
-        aError = _( "Stripline requires reference copper above and below" );
+        aError = _( "Stripline requires positive dielectric thickness above and below" );
         return std::nullopt;
     }
 
@@ -3009,8 +3030,6 @@ void PANEL_SETUP_BOARD_STACKUP::updateAllImpedanceRows()
 {
     for( const IMPEDANCE_ROW& row : m_impedanceRows )
         updateImpedanceRow( row.m_layer );
-
-    updateStackupRowColors();
 }
 
 
