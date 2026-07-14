@@ -34,11 +34,13 @@
 #include <wx/log.h>
 #include <wx/rawbmp.h>
 #include <wx/clipbrd.h>
+#include <wx/dcbuffer.h>
 #include <wx/file.h>
 #include <wx/filedlg.h>
 #include <wx/wupdlock.h>
 #include <wx/richmsgdlg.h>
 #include <wx/statbox.h>
+#include <wx/settings.h>
 #include <math/util.h>      // for KiROUND
 #include <transline_calculations/coupled_microstrip.h>
 #include <transline_calculations/coupled_stripline.h>
@@ -87,6 +89,196 @@ static wxColor pasteColor( 200, 200, 200 );
 static void drawBitmap( wxBitmap& aBitmap, wxColor aColor );
 
 static const wxString KICAD_PRO_STACKUP_PROPERTY = wxT( "kicad_pro.stackup_control" );
+
+
+struct STACKUP_PREVIEW_BAND
+{
+    BOARD_STACKUP_ITEM_TYPE m_type;
+    wxString                m_layer;
+    wxString                m_material;
+    wxString                m_details;
+    wxString                m_thickness;
+    double                  m_thicknessMm;
+    bool                    m_core;
+};
+
+
+class STACKUP_PREVIEW_PANEL : public wxPanel
+{
+public:
+    STACKUP_PREVIEW_PANEL( wxWindow* aParent ) :
+            wxPanel( aParent, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxBORDER_SIMPLE )
+    {
+        SetBackgroundStyle( wxBG_STYLE_PAINT );
+        SetMinSize( wxSize( FromDIP( 500 ), FromDIP( 270 ) ) );
+        SetName( _( "Live Stackup Preview" ) );
+        SetToolTip( _( "Live color-coded preview of the physical board stackup. "
+                       "Each band is also identified by its layer, material, and thickness." ) );
+        Bind( wxEVT_PAINT, &STACKUP_PREVIEW_PANEL::onPaint, this );
+    }
+
+    void SetStackup( std::vector<STACKUP_PREVIEW_BAND> aBands, const wxString& aTotalThickness )
+    {
+        m_bands = std::move( aBands );
+        m_totalThickness = aTotalThickness;
+        Refresh();
+    }
+
+private:
+    static wxColour bandColor( const STACKUP_PREVIEW_BAND& aBand )
+    {
+        switch( aBand.m_type )
+        {
+        case BS_ITEM_TYPE_COPPER:      return wxColour( 205, 126, 70 );
+        case BS_ITEM_TYPE_DIELECTRIC:  return aBand.m_core ? wxColour( 112, 101, 73 )
+                                                             : wxColour( 111, 128, 94 );
+        case BS_ITEM_TYPE_SOLDERMASK:  return wxColour( 20, 126, 60 );
+        case BS_ITEM_TYPE_SILKSCREEN:  return wxColour( 225, 229, 234 );
+        case BS_ITEM_TYPE_SOLDERPASTE: return wxColour( 150, 157, 166 );
+        default:                       return wxColour( 100, 107, 116 );
+        }
+    }
+
+    static wxColour textColor( const wxColour& aBackground )
+    {
+        const double luminance = 0.2126 * aBackground.Red() + 0.7152 * aBackground.Green()
+                                 + 0.0722 * aBackground.Blue();
+        return luminance > 145.0 ? wxColour( 24, 29, 36 ) : *wxWHITE;
+    }
+
+    static wxString fitText( wxDC& aDc, wxString aText, int aWidth )
+    {
+        if( aWidth <= 0 || aDc.GetTextExtent( aText ).GetWidth() <= aWidth )
+            return aText;
+
+        const wxString ellipsis = wxT( "…" );
+
+        while( !aText.IsEmpty()
+               && aDc.GetTextExtent( aText + ellipsis ).GetWidth() > aWidth )
+        {
+            aText.RemoveLast();
+        }
+
+        return aText + ellipsis;
+    }
+
+    static double naturalHeight( const STACKUP_PREVIEW_BAND& aBand )
+    {
+        switch( aBand.m_type )
+        {
+        case BS_ITEM_TYPE_DIELECTRIC:
+            return 27.0 + std::min( 24.0, std::sqrt( std::max( 0.0, aBand.m_thicknessMm ) )
+                                                  * 24.0 );
+        case BS_ITEM_TYPE_COPPER:      return 24.0;
+        case BS_ITEM_TYPE_SOLDERMASK:  return 21.0;
+        case BS_ITEM_TYPE_SILKSCREEN:  return 18.0;
+        case BS_ITEM_TYPE_SOLDERPASTE: return 12.0;
+        default:                       return 18.0;
+        }
+    }
+
+    void onPaint( wxPaintEvent& )
+    {
+        wxAutoBufferedPaintDC dc( this );
+        const wxColour background = wxSystemSettings::GetColour( wxSYS_COLOUR_WINDOW );
+        const wxColour foreground = wxSystemSettings::GetColour( wxSYS_COLOUR_WINDOWTEXT );
+        const wxColour divider = wxSystemSettings::GetColour( wxSYS_COLOUR_3DSHADOW );
+        const wxSize size = GetClientSize();
+        dc.SetBackground( wxBrush( background ) );
+        dc.Clear();
+
+        const int margin = FromDIP( 9 );
+        const int headerHeight = FromDIP( 38 );
+        dc.SetTextForeground( foreground );
+        wxFont titleFont = GetFont().Bold();
+        dc.SetFont( titleFont );
+        dc.DrawText( _( "Live Stackup" ), margin, FromDIP( 7 ) );
+        dc.SetFont( GetFont() );
+
+        const int totalWidth = dc.GetTextExtent( m_totalThickness ).GetWidth();
+        dc.DrawText( m_totalThickness, std::max( margin, size.x - margin - totalWidth ),
+                     FromDIP( 8 ) );
+        dc.SetPen( wxPen( divider ) );
+        dc.DrawLine( margin, headerHeight - FromDIP( 3 ), size.x - margin,
+                     headerHeight - FromDIP( 3 ) );
+
+        if( m_bands.empty() )
+        {
+            dc.DrawText( _( "No physical layers to preview" ), margin, headerHeight + margin );
+            return;
+        }
+
+        const int availableHeight = std::max( 1, size.y - headerHeight - margin );
+        double naturalTotal = 0.0;
+
+        for( const STACKUP_PREVIEW_BAND& band : m_bands )
+            naturalTotal += naturalHeight( band );
+
+        const double scale = std::min( 1.0, availableHeight / naturalTotal );
+        int y = headerHeight;
+
+        for( size_t ii = 0; ii < m_bands.size(); ++ii )
+        {
+            const STACKUP_PREVIEW_BAND& band = m_bands[ii];
+            int bandHeight = std::max( FromDIP( 3 ),
+                                       static_cast<int>( std::lround( naturalHeight( band )
+                                                                      * scale ) ) );
+
+            if( ii + 1 == m_bands.size() )
+                bandHeight = std::max( FromDIP( 3 ), size.y - margin - y );
+
+            const wxRect rect( margin, y, std::max( 1, size.x - 2 * margin ), bandHeight );
+            const wxColour color = bandColor( band );
+            dc.SetPen( wxPen( color.ChangeLightness( 70 ) ) );
+            dc.SetBrush( wxBrush( color ) );
+            dc.DrawRectangle( rect );
+
+            if( bandHeight >= FromDIP( 13 ) )
+            {
+                wxRect clipRect = rect;
+                clipRect.Deflate( FromDIP( 5 ), 0 );
+                dc.SetClippingRegion( clipRect );
+                dc.SetTextForeground( textColor( color ) );
+                dc.SetFont( GetFont().Bold() );
+                const int thicknessWidth = dc.GetTextExtent( band.m_thickness ).GetWidth();
+                const int labelWidth = std::min( FromDIP( 105 ),
+                                                 std::max( FromDIP( 58 ), rect.width / 3 ) );
+                const int primaryY = rect.y + std::max( 0, ( bandHeight
+                                                             - dc.GetCharHeight() ) / 2 );
+                dc.DrawText( fitText( dc, band.m_layer, labelWidth ), rect.x + FromDIP( 6 ),
+                             primaryY );
+                dc.SetFont( GetFont() );
+                dc.DrawText( band.m_thickness,
+                             rect.GetRight() - thicknessWidth - FromDIP( 6 ),
+                             primaryY );
+
+                if( !band.m_material.IsEmpty() || !band.m_details.IsEmpty() )
+                {
+                    wxString secondary = band.m_material;
+
+                    if( !band.m_details.IsEmpty() )
+                        secondary += secondary.IsEmpty() ? band.m_details
+                                                         : wxT( "  ·  " ) + band.m_details;
+
+                    const int secondaryX = rect.x + FromDIP( 6 ) + labelWidth + FromDIP( 5 );
+                    const int secondaryWidth = rect.GetRight() - thicknessWidth - FromDIP( 12 )
+                                               - secondaryX;
+
+                    if( secondaryWidth >= FromDIP( 35 ) )
+                        dc.DrawText( fitText( dc, secondary, secondaryWidth ), secondaryX,
+                                     primaryY );
+                }
+
+                dc.DestroyClippingRegion();
+            }
+
+            y += bandHeight;
+        }
+    }
+
+    std::vector<STACKUP_PREVIEW_BAND> m_bands;
+    wxString                          m_totalThickness;
+};
 
 
 const std::vector<PANEL_SETUP_BOARD_STACKUP::STACKUP_PRESET>&
@@ -830,6 +1022,7 @@ int PANEL_SETUP_BOARD_STACKUP::computeBoardThickness()
     // The text in the event will translate to the value for the text control
     // and is only updated if it changed
     m_tcCTValue->ChangeValue( thicknessStr );
+    updateStackupPreview();
 
     return thickness;
 }
@@ -1069,6 +1262,8 @@ void PANEL_SETUP_BOARD_STACKUP::lazyBuildRowUI( BOARD_STACKUP_ROW_UI_ITEM& ui_ro
             wxChoice* choice = new wxChoice( m_scGridWin, wxID_ANY, wxDefaultPosition,
                                              wxDefaultSize, m_core_prepreg_choice );
             choice->SetSelection( item->GetTypeName() == KEY_CORE ? 0 : 1 );
+            choice->Bind( wxEVT_CHOICE,
+                          [this]( wxCommandEvent& ) { updateStackupPreview(); } );
             m_fgGridSizer->Insert( aPos++, choice, 1, wxEXPAND|wxLEFT|wxRIGHT|wxALIGN_CENTER_VERTICAL, 2 );
 
             ui_row_item.m_LayerTypeCtrl = choice;
@@ -1112,6 +1307,8 @@ void PANEL_SETUP_BOARD_STACKUP::lazyBuildRowUI( BOARD_STACKUP_ROW_UI_ITEM& ui_ro
             textCtrl->ChangeValue( wxGetTranslation( NotSpecifiedPrm() ) );
 
         textCtrl->SetMinSize( m_numericTextCtrlSize );
+        textCtrl->Bind( wxEVT_TEXT,
+                        [this]( wxCommandEvent& ) { updateStackupPreview(); } );
        	bSizerMat->Add( textCtrl, 0, wxALIGN_CENTER_VERTICAL|wxLEFT, 5 );
 
        	wxButton* m_buttonMat = new wxButton( m_scGridWin, ID_ITEM_MATERIAL+row, _( "..." ),
@@ -1666,6 +1863,7 @@ void PANEL_SETUP_BOARD_STACKUP::onColorSelected( wxCommandEvent& event )
     }
 
     updateIconColor( row );
+    updateStackupPreview();
 }
 
 
@@ -1842,6 +2040,10 @@ void PANEL_SETUP_BOARD_STACKUP::buildStackupPresetControls()
 void PANEL_SETUP_BOARD_STACKUP::buildImpedancePanel()
 {
     m_sizerStackup->SetOrientation( wxHORIZONTAL );
+    wxBoxSizer* rightColumn = new wxBoxSizer( wxVERTICAL );
+
+    m_stackupPreview = new STACKUP_PREVIEW_PANEL( this );
+    rightColumn->Add( m_stackupPreview, 0, wxEXPAND );
 
     m_impedancePanel = new wxPanel( this );
     m_impedancePanel->SetMinSize( wxSize( FromDIP( 500 ), -1 ) );
@@ -1868,12 +2070,103 @@ void PANEL_SETUP_BOARD_STACKUP::buildImpedancePanel()
                      FromDIP( 6 ) );
 
     m_impedancePanel->SetSizer( panelSizer );
-    m_sizerStackup->Add( m_impedancePanel, 0, wxEXPAND | wxLEFT, FromDIP( 10 ) );
+    rightColumn->Add( m_impedancePanel, 1, wxEXPAND | wxTOP, FromDIP( 8 ) );
+    m_sizerStackup->Add( rightColumn, 0, wxEXPAND | wxLEFT, FromDIP( 10 ) );
 
     m_impedanceControlled->Bind( wxEVT_CHECKBOX,
                                  &PANEL_SETUP_BOARD_STACKUP::onImpedanceControlled, this );
     rebuildImpedanceRows();
     updateImpedancePanelVisibility();
+    updateStackupPreview();
+}
+
+
+void PANEL_SETUP_BOARD_STACKUP::updateStackupPreview()
+{
+    if( !m_stackupPreview )
+        return;
+
+    std::vector<STACKUP_PREVIEW_BAND> bands;
+
+    for( const BOARD_STACKUP_ROW_UI_ITEM& row : m_rowUiItemsList )
+    {
+        BOARD_STACKUP_ITEM* item = row.m_Item;
+
+        if( !row.m_isEnabled || !item )
+            continue;
+
+        STACKUP_PREVIEW_BAND band;
+        band.m_type = item->GetType();
+        band.m_core = item->GetTypeName() == KEY_CORE;
+        band.m_thicknessMm = 0.0;
+
+        if( item->GetType() == BS_ITEM_TYPE_DIELECTRIC )
+        {
+            band.m_layer = item->FormatDielectricLayerName();
+
+            if( item->GetSublayersCount() > 1 )
+                band.m_layer += wxString::Format( wxT( " %d/%d" ), row.m_SubItem + 1,
+                                                   item->GetSublayersCount() );
+
+            for( const BOARD_STACKUP_ROW_UI_ITEM& candidate : m_rowUiItemsList )
+            {
+                if( candidate.m_Item != item )
+                    continue;
+
+                if( const wxChoice* type = dynamic_cast<const wxChoice*>(
+                            candidate.m_LayerTypeCtrl ) )
+                {
+                    band.m_core = type->GetSelection() == 0;
+                    break;
+                }
+            }
+
+            band.m_details = band.m_core ? _( "Core" ) : _( "Prepreg" );
+        }
+        else
+        {
+            band.m_layer = row.m_LayerName ? row.m_LayerName->GetLabel()
+                                           : item->GetLayerName();
+
+            switch( item->GetType() )
+            {
+            case BS_ITEM_TYPE_COPPER:      band.m_details = _( "Copper" ); break;
+            case BS_ITEM_TYPE_SOLDERMASK:  band.m_details = _( "Solder mask" ); break;
+            case BS_ITEM_TYPE_SILKSCREEN:  band.m_details = _( "Silkscreen" ); break;
+            case BS_ITEM_TYPE_SOLDERPASTE: band.m_details = _( "Solder paste" ); break;
+            default: break;
+            }
+        }
+
+        if( const wxTextCtrl* material = dynamic_cast<const wxTextCtrl*>( row.m_MaterialCtrl ) )
+        {
+            band.m_material = material->GetValue();
+
+            if( band.m_material == wxGetTranslation( NotSpecifiedPrm() ) )
+                band.m_material.clear();
+        }
+
+        if( const wxTextCtrl* thickness = dynamic_cast<const wxTextCtrl*>( row.m_ThicknessCtrl ) )
+        {
+            band.m_thickness = thickness->GetValue();
+            band.m_thicknessMm = pcbIUScale.IUTomm(
+                    m_frame->ValueFromString( band.m_thickness ) );
+        }
+
+        if( item->HasEpsilonRValue() )
+        {
+            if( const wxTextCtrl* epsilon = dynamic_cast<const wxTextCtrl*>( row.m_EpsilonCtrl ) )
+            {
+                if( !epsilon->GetValue().IsEmpty() )
+                    band.m_details += wxString::Format( wxT( "  εr %s" ), epsilon->GetValue() );
+            }
+        }
+
+        bands.push_back( std::move( band ) );
+    }
+
+    const wxString total = wxString::Format( _( "Total: %s" ), m_tcCTValue->GetValue() );
+    m_stackupPreview->SetStackup( std::move( bands ), total );
 }
 
 
@@ -2835,6 +3128,8 @@ void PANEL_SETUP_BOARD_STACKUP::updateAllImpedanceRows()
 {
     for( const IMPEDANCE_ROW& row : m_impedanceRows )
         updateImpedanceRow( row.m_layer );
+
+    updateStackupPreview();
 }
 
 

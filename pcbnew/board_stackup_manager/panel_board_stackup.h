@@ -47,6 +47,7 @@ class wxPanel;
 class wxScrolledWindow;
 class wxStaticText;
 class wxTextCtrl;
+class STACKUP_PREVIEW_PANEL;
 
 
 // A helper class to handle UI items managed by m_fgGridSizer
@@ -189,6 +190,7 @@ private:
     };
 
     void buildImpedancePanel();
+    void updateStackupPreview();
     void buildStackupPresetControls();
     void rebuildImpedanceRows();
     void saveImpedanceRowState();
@@ -353,6 +355,7 @@ private:
                                                     //   with added event handlers
 
     wxPanel*                         m_impedancePanel = nullptr;
+    STACKUP_PREVIEW_PANEL*           m_stackupPreview = nullptr;
     wxChoice*                        m_stackupPreset = nullptr;
     wxButton*                        m_importStackupPreset = nullptr;
     wxScrolledWindow*                m_impedanceGridWindow = nullptr;
