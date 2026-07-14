@@ -48,6 +48,13 @@
 #include <widgets/resettable_panel.h>
 #include <widgets/wx_progress_reporters.h>
 #include <wildcards_and_files_ext.h>
+#include <ui_events.h>
+#include <wx/choice.h>
+#include <wx/panel.h>
+#include <wx/settings.h>
+#include <wx/sizer.h>
+#include <wx/stattext.h>
+#include <wx/treectrl.h>
 
 #include "dialog_board_setup.h"
 
@@ -68,6 +75,8 @@ DIALOG_BOARD_SETUP::DIALOG_BOARD_SETUP( PCB_EDIT_FRAME* aFrame, wxWindow* aParen
         m_zoneHatchOffsets( nullptr ),
         m_tuningProfiles( nullptr ),
         m_netClasses( nullptr ),
+        m_unitsPanel( nullptr ),
+        m_unitsChoice( nullptr ),
         m_currentPage( 0 ),
         m_layersPage( 0 ),
         m_physicalStackupPage( 0 ),
@@ -264,6 +273,30 @@ DIALOG_BOARD_SETUP::DIALOG_BOARD_SETUP( PCB_EDIT_FRAME* aFrame, wxWindow* aParen
     for( size_t i = 0; i < m_treebook->GetPageCount(); ++i )
         m_treebook->ExpandNode( i );
 
+    wxWindow* treebookPanel = m_treebook->GetParent();
+    m_unitsPanel = new wxPanel( treebookPanel, wxID_ANY, wxDefaultPosition, wxDefaultSize,
+                                wxBORDER_SIMPLE );
+    m_unitsPanel->SetName( _( "Board Setup display units" ) );
+    m_unitsPanel->SetToolTip(
+            _( "Change the display units for Board Setup and the PCB Editor." ) );
+    m_unitsPanel->SetBackgroundColour( wxSystemSettings::GetColour( wxSYS_COLOUR_WINDOW ) );
+
+    wxBoxSizer* unitsSizer = new wxBoxSizer( wxHORIZONTAL );
+    wxStaticText* unitsLabel = new wxStaticText( m_unitsPanel, wxID_ANY, _( "Units:" ) );
+    m_unitsChoice = new wxChoice( m_unitsPanel, wxID_ANY );
+    m_unitsChoice->Append( _( "mm" ) );
+    m_unitsChoice->Append( _( "mil" ) );
+    m_unitsChoice->Append( _( "inch" ) );
+    unitsSizer->Add( unitsLabel, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP( 7 ) );
+    unitsSizer->Add( m_unitsChoice, 1, wxALIGN_CENTER_VERTICAL | wxALL, FromDIP( 5 ) );
+    m_unitsPanel->SetSizerAndFit( unitsSizer );
+
+    wxCommandEvent initialUnitsEvent;
+    onUnitsChanged( initialUnitsEvent );
+    m_unitsChoice->Bind( wxEVT_CHOICE, &DIALOG_BOARD_SETUP::onUnitsSelected, this );
+    treebookPanel->Bind( wxEVT_SIZE, &DIALOG_BOARD_SETUP::onTreebookPanelSize, this );
+    m_frame->Bind( EDA_EVT_UNITS_CHANGED, &DIALOG_BOARD_SETUP::onUnitsChanged, this );
+
     SetEvtHandlerEnabled( true );
 
     finishDialogSettings();
@@ -277,11 +310,64 @@ DIALOG_BOARD_SETUP::DIALOG_BOARD_SETUP( PCB_EDIT_FRAME* aFrame, wxWindow* aParen
     wxBookCtrlEvent evt( wxEVT_TREEBOOK_PAGE_CHANGED, wxID_ANY, 0 );
 
     wxQueueEvent( m_treebook, evt.Clone() );
+    CallAfter( &DIALOG_BOARD_SETUP::positionUnitsSelector );
 }
 
 
 DIALOG_BOARD_SETUP::~DIALOG_BOARD_SETUP()
 {
+    if( m_frame )
+        m_frame->Unbind( EDA_EVT_UNITS_CHANGED, &DIALOG_BOARD_SETUP::onUnitsChanged, this );
+
+    if( m_unitsPanel && m_unitsPanel->GetParent() )
+    {
+        m_unitsPanel->GetParent()->Unbind( wxEVT_SIZE,
+                                           &DIALOG_BOARD_SETUP::onTreebookPanelSize, this );
+    }
+}
+
+
+void DIALOG_BOARD_SETUP::onUnitsSelected( wxCommandEvent& )
+{
+    switch( m_unitsChoice->GetSelection() )
+    {
+    case 1:  m_frame->ChangeUserUnits( EDA_UNITS::MILS ); break;
+    case 2:  m_frame->ChangeUserUnits( EDA_UNITS::INCH ); break;
+    default: m_frame->ChangeUserUnits( EDA_UNITS::MM );   break;
+    }
+}
+
+
+void DIALOG_BOARD_SETUP::onUnitsChanged( wxCommandEvent& )
+{
+    switch( m_frame->GetUserUnits() )
+    {
+    case EDA_UNITS::MILS: m_unitsChoice->SetSelection( 1 ); break;
+    case EDA_UNITS::INCH: m_unitsChoice->SetSelection( 2 ); break;
+    default:              m_unitsChoice->SetSelection( 0 ); break;
+    }
+}
+
+
+void DIALOG_BOARD_SETUP::onTreebookPanelSize( wxSizeEvent& aEvent )
+{
+    aEvent.Skip();
+    CallAfter( &DIALOG_BOARD_SETUP::positionUnitsSelector );
+}
+
+
+void DIALOG_BOARD_SETUP::positionUnitsSelector()
+{
+    if( !m_unitsPanel || !m_treebook || !m_treebook->GetTreeCtrl() )
+        return;
+
+    wxWindow* host = m_unitsPanel->GetParent();
+    const int width = std::max( FromDIP( 145 ), m_treebook->GetTreeCtrl()->GetSize().x );
+    const int height = m_unitsPanel->GetBestSize().y;
+    const int y = std::max( 0, host->GetClientSize().y - height - FromDIP( 3 ) );
+
+    m_unitsPanel->SetSize( 0, y, width, height );
+    m_unitsPanel->Raise();
 }
 
 

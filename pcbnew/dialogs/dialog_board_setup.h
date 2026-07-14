@@ -37,6 +37,9 @@ class PANEL_SETUP_BOARD_FINISH;
 class PANEL_SETUP_SEVERITIES;
 class PANEL_TEXT_VARIABLES;
 class PANEL_SETUP_TUNING_PROFILES;
+class wxChoice;
+class wxPanel;
+class wxSizeEvent;
 
 
 class DIALOG_BOARD_SETUP : public PAGED_DIALOG
@@ -49,6 +52,10 @@ protected:
     // event handlers
     void onPageChanged( wxBookCtrlEvent& aEvent ) override;
     void onAuxiliaryAction( wxCommandEvent& aEvent ) override;
+    void onUnitsSelected( wxCommandEvent& aEvent );
+    void onUnitsChanged( wxCommandEvent& aEvent );
+    void onTreebookPanelSize( wxSizeEvent& aEvent );
+    void positionUnitsSelector();
 
     PCB_EDIT_FRAME*                     m_frame;
     PANEL_SETUP_LAYERS*                 m_layers;
@@ -57,6 +64,8 @@ protected:
     PANEL_SETUP_ZONE_HATCH_OFFSETS*     m_zoneHatchOffsets;
     PANEL_SETUP_TUNING_PROFILES*        m_tuningProfiles;
     PANEL_SETUP_NETCLASSES*             m_netClasses;
+    wxPanel*                            m_unitsPanel;
+    wxChoice*                           m_unitsChoice;
 
 private:
     size_t m_currentPage;              // the current page index

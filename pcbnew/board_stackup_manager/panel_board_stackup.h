@@ -47,7 +47,6 @@ class wxPanel;
 class wxScrolledWindow;
 class wxStaticText;
 class wxTextCtrl;
-class STACKUP_PREVIEW_PANEL;
 
 
 // A helper class to handle UI items managed by m_fgGridSizer
@@ -75,6 +74,7 @@ struct BOARD_STACKUP_ROW_UI_ITEM
     wxControl*      m_ColorCtrl;        // control shown in column 7
     wxControl*      m_EpsilonCtrl;      // control shown in column 8
     wxControl*      m_LossTgCtrl;       // control shown in column 9
+    wxPanel*        m_Background;        // full-row semantic stackup color
 
     COLOR4D         m_UserColor;        // User-specified color (if any)
 
@@ -92,7 +92,8 @@ struct BOARD_STACKUP_ROW_UI_ITEM
         m_ThicknessLockCtrl( nullptr ),
         m_ColorCtrl( nullptr ),
         m_EpsilonCtrl( nullptr ),
-        m_LossTgCtrl( nullptr )
+        m_LossTgCtrl( nullptr ),
+        m_Background( nullptr )
     {}
 };
 
@@ -190,7 +191,9 @@ private:
     };
 
     void buildImpedancePanel();
-    void updateStackupPreview();
+    void updateStackupRowColors();
+    void layoutStackupRowBackgrounds();
+    wxColor getStackupRowColor( const BOARD_STACKUP_ROW_UI_ITEM& aRow ) const;
     void buildStackupPresetControls();
     void rebuildImpedanceRows();
     void saveImpedanceRowState();
@@ -355,11 +358,11 @@ private:
                                                     //   with added event handlers
 
     wxPanel*                         m_impedancePanel = nullptr;
-    STACKUP_PREVIEW_PANEL*           m_stackupPreview = nullptr;
     wxChoice*                        m_stackupPreset = nullptr;
     wxButton*                        m_importStackupPreset = nullptr;
     wxScrolledWindow*                m_impedanceGridWindow = nullptr;
     wxFlexGridSizer*                 m_impedanceGrid = nullptr;
+    wxStaticText*                    m_impedanceWidthHeading = nullptr;
     std::vector<IMPEDANCE_ROW>       m_impedanceRows;
     std::map<PCB_LAYER_ID, IMPEDANCE_STATE> m_impedanceState;
     std::vector<const STACKUP_PRESET*> m_visibleStackupPresets;
