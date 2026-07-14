@@ -34,6 +34,8 @@
 #include <wx/log.h>
 #include <wx/rawbmp.h>
 #include <wx/clipbrd.h>
+#include <wx/file.h>
+#include <wx/filedlg.h>
 #include <wx/wupdlock.h>
 #include <wx/richmsgdlg.h>
 #include <wx/statbox.h>
@@ -59,6 +61,8 @@
 #include <algorithm>
 #include <cmath>
 #include <memory>
+#include <nlohmann/json.hpp>
+#include <stdexcept>
 
 
 // Some wx widget ID to know what widget has fired a event:
@@ -81,6 +85,8 @@ static wxColor dielectricColor( 75, 120, 75 );
 static wxColor pasteColor( 200, 200, 200 );
 
 static void drawBitmap( wxBitmap& aBitmap, wxColor aColor );
+
+static const wxString KICAD_PRO_STACKUP_PROPERTY = wxT( "kicad_pro.stackup_control" );
 
 
 const std::vector<PANEL_SETUP_BOARD_STACKUP::STACKUP_PRESET>&
@@ -343,6 +349,7 @@ PANEL_SETUP_BOARD_STACKUP::PANEL_SETUP_BOARD_STACKUP( wxWindow* aParentWindow,
     computeBoardThickness();
     buildStackupPresetControls();
     buildImpedancePanel();
+    loadProjectImpedanceSettings();
 
     m_frame->Bind( EDA_EVT_UNITS_CHANGED, &PANEL_SETUP_BOARD_STACKUP::onUnitsChanged, this );
 }
@@ -1558,6 +1565,17 @@ bool PANEL_SETUP_BOARD_STACKUP::TransferDataFromWindow()
         modified = true;
     }
 
+    std::map<wxString, wxString> boardProperties = m_board->GetProperties();
+    const wxString projectSettings = serializeProjectImpedanceSettings();
+    auto property = boardProperties.find( KICAD_PRO_STACKUP_PROPERTY );
+
+    if( property == boardProperties.end() || property->second != projectSettings )
+    {
+        boardProperties[KICAD_PRO_STACKUP_PROPERTY] = projectSettings;
+        m_board->SetProperties( boardProperties );
+        modified = true;
+    }
+
     if( modified )
         m_frame->OnModify();
 
@@ -1578,8 +1596,7 @@ void PANEL_SETUP_BOARD_STACKUP::ImportSettingsFrom( BOARD* aBoard )
     rebuildLayerStackPanel( true );
     synchronizeWithBoard( true );
     computeBoardThickness();
-    rebuildImpedanceRows();
-    updateImpedancePanelVisibility();
+    loadProjectImpedanceSettings();
 
     m_brdSettings = savedSettings;
     m_board = savedBrd;
@@ -1803,15 +1820,22 @@ void PANEL_SETUP_BOARD_STACKUP::buildStackupPresetControls()
     m_stackupPreset->SetToolTip(
             _( "Populate the layer count, copper, dielectric materials, thicknesses, and "
                "dielectric constants from a manufacturer stackup" ) );
+    m_importStackupPreset = new wxButton( this, wxID_ANY, _( "Import..." ) );
+    m_importStackupPreset->SetToolTip(
+            _( "Import a KiCad Pro stackup preset from a JSON file" ) );
 
     // Place the preset with the other stackup-level actions, immediately after the
     // impedance-controlled checkbox and before the dielectric layer buttons.
     bTopSizer->Insert( 4, label, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP( 10 ) );
     bTopSizer->Insert( 5, m_stackupPreset, 0, wxALIGN_CENTER_VERTICAL | wxLEFT | wxRIGHT,
                        FromDIP( 5 ) );
+    bTopSizer->Insert( 6, m_importStackupPreset, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT,
+                       FromDIP( 5 ) );
 
     rebuildPresetChoices();
     m_stackupPreset->Bind( wxEVT_CHOICE, &PANEL_SETUP_BOARD_STACKUP::onApplyStackupPreset, this );
+    m_importStackupPreset->Bind( wxEVT_BUTTON,
+                                 &PANEL_SETUP_BOARD_STACKUP::onImportStackupPreset, this );
 }
 
 
@@ -1871,6 +1895,14 @@ void PANEL_SETUP_BOARD_STACKUP::rebuildPresetChoices()
                                                    preset.m_copperThicknessMm.size() ) );
     }
 
+    for( const STACKUP_PRESET& preset : m_importedStackupPresets )
+    {
+        m_visibleStackupPresets.push_back( &preset );
+        m_stackupPreset->Append( wxString::Format( wxT( "%s — %s (%zu layers)" ),
+                                                   preset.m_manufacturer, preset.m_name,
+                                                   preset.m_copperThicknessMm.size() ) );
+    }
+
     m_stackupPreset->SetSelection( 0 );
 }
 
@@ -1880,7 +1912,14 @@ void PANEL_SETUP_BOARD_STACKUP::onApplyStackupPreset( wxCommandEvent& aEvent )
     const int selection = m_stackupPreset ? m_stackupPreset->GetSelection() : wxNOT_FOUND;
 
     if( selection > 0 && selection < static_cast<int>( m_visibleStackupPresets.size() ) )
-        applyStackupPreset( *m_visibleStackupPresets[selection] );
+    {
+        m_activeStackupPreset = *m_visibleStackupPresets[selection];
+        applyStackupPreset( *m_activeStackupPreset );
+    }
+    else
+    {
+        m_activeStackupPreset.reset();
+    }
 
     aEvent.Skip();
 }
@@ -1929,7 +1968,7 @@ void PANEL_SETUP_BOARD_STACKUP::applyStackupPreset( const STACKUP_PRESET& aPrese
                 item->SetMaterial( aPreset.m_manufacturer + wxT( " " ) + layer.m_material, ii );
                 item->SetThickness( pcbIUScale.mmToIU( layer.m_thicknessMm ), ii );
                 item->SetEpsilonR( layer.m_epsilonR, ii );
-                item->SetLossTangent( 0.02, ii );
+                item->SetLossTangent( layer.m_lossTangent, ii );
                 item->SetThicknessLocked( true, ii );
             }
         }
@@ -1941,6 +1980,309 @@ void PANEL_SETUP_BOARD_STACKUP::applyStackupPreset( const STACKUP_PRESET& aPrese
     rebuildImpedanceRows();
     updateImpedancePanelVisibility();
     Layout();
+}
+
+
+std::string PANEL_SETUP_BOARD_STACKUP::serializeStackupPresetJson(
+        const STACKUP_PRESET& aPreset ) const
+{
+    nlohmann::json root = {
+        { "format", "kicad-pro-stackup" },
+        { "version", 1 },
+        { "manufacturer", std::string( aPreset.m_manufacturer.utf8_str() ) },
+        { "name", std::string( aPreset.m_name.utf8_str() ) },
+        { "copper_thickness_mm", aPreset.m_copperThicknessMm },
+        { "dielectrics", nlohmann::json::array() }
+    };
+
+    for( const std::vector<PRESET_DIELECTRIC>& dielectric : aPreset.m_dielectrics )
+    {
+        nlohmann::json layers = nlohmann::json::array();
+
+        for( const PRESET_DIELECTRIC& layer : dielectric )
+        {
+            layers.push_back( {
+                { "type", layer.m_core ? "core" : "prepreg" },
+                { "material", std::string( layer.m_material.utf8_str() ) },
+                { "thickness_mm", layer.m_thicknessMm },
+                { "epsilon_r", layer.m_epsilonR },
+                { "loss_tangent", layer.m_lossTangent }
+            } );
+        }
+
+        root["dielectrics"].push_back( std::move( layers ) );
+    }
+
+    return root.dump( 2 );
+}
+
+
+std::optional<PANEL_SETUP_BOARD_STACKUP::STACKUP_PRESET>
+PANEL_SETUP_BOARD_STACKUP::parseStackupPresetJson( const std::string& aJson,
+                                                    wxString& aError ) const
+{
+    try
+    {
+        const nlohmann::json root = nlohmann::json::parse( aJson );
+
+        if( root.value( "format", "" ) != "kicad-pro-stackup" || root.value( "version", 0 ) != 1 )
+        {
+            aError = _( "The file is not a KiCad Pro stackup preset version 1." );
+            return std::nullopt;
+        }
+
+        STACKUP_PRESET preset;
+        preset.m_manufacturer = wxString::FromUTF8( root.at( "manufacturer" ).get<std::string>() );
+        preset.m_name = wxString::FromUTF8( root.at( "name" ).get<std::string>() );
+        preset.m_copperThicknessMm = root.at( "copper_thickness_mm" ).get<std::vector<double>>();
+
+        if( preset.m_manufacturer.IsEmpty() || preset.m_name.IsEmpty() )
+            throw std::runtime_error( "manufacturer and name must not be empty" );
+
+        const size_t copperCount = preset.m_copperThicknessMm.size();
+
+        if( copperCount < 2 || copperCount > 32 || copperCount % 2 != 0 )
+            throw std::runtime_error( "copper_thickness_mm must contain 2 to 32 even-numbered layers" );
+
+        if( std::any_of( preset.m_copperThicknessMm.begin(), preset.m_copperThicknessMm.end(),
+                         []( double aThickness ) { return aThickness <= 0.0; } ) )
+        {
+            throw std::runtime_error( "copper thicknesses must be greater than zero" );
+        }
+
+        const nlohmann::json& dielectrics = root.at( "dielectrics" );
+
+        if( !dielectrics.is_array() || dielectrics.size() != copperCount - 1 )
+            throw std::runtime_error( "dielectrics must contain one entry between each copper layer" );
+
+        for( const nlohmann::json& dielectric : dielectrics )
+        {
+            if( !dielectric.is_array() || dielectric.empty() )
+                throw std::runtime_error( "each dielectric entry must contain at least one sublayer" );
+
+            std::vector<PRESET_DIELECTRIC> sublayers;
+
+            for( const nlohmann::json& source : dielectric )
+            {
+                const std::string type = source.at( "type" ).get<std::string>();
+
+                if( type != "core" && type != "prepreg" )
+                    throw std::runtime_error( "dielectric type must be core or prepreg" );
+
+                PRESET_DIELECTRIC layer;
+                layer.m_core = type == "core";
+                layer.m_material = wxString::FromUTF8( source.at( "material" ).get<std::string>() );
+                layer.m_thicknessMm = source.at( "thickness_mm" ).get<double>();
+                layer.m_epsilonR = source.at( "epsilon_r" ).get<double>();
+                layer.m_lossTangent = source.value( "loss_tangent", 0.02 );
+
+                if( layer.m_material.IsEmpty() || layer.m_thicknessMm <= 0.0
+                    || layer.m_epsilonR <= 0.0 || layer.m_lossTangent < 0.0 )
+                {
+                    throw std::runtime_error( "dielectric values must be positive" );
+                }
+
+                sublayers.push_back( std::move( layer ) );
+            }
+
+            preset.m_dielectrics.push_back( std::move( sublayers ) );
+        }
+
+        return preset;
+    }
+    catch( const std::exception& exception )
+    {
+        aError = wxString::Format( _( "Invalid stackup preset: %s" ),
+                                   wxString::FromUTF8( exception.what() ) );
+        return std::nullopt;
+    }
+}
+
+
+std::optional<PANEL_SETUP_BOARD_STACKUP::STACKUP_PRESET>
+PANEL_SETUP_BOARD_STACKUP::readStackupPresetFile( const wxString& aPath, wxString& aError ) const
+{
+    wxFile file( aPath );
+    wxString contents;
+
+    if( !file.IsOpened() || !file.ReadAll( &contents ) )
+    {
+        aError = _( "The stackup preset file could not be read." );
+        return std::nullopt;
+    }
+
+    return parseStackupPresetJson( std::string( contents.utf8_str() ), aError );
+}
+
+
+void PANEL_SETUP_BOARD_STACKUP::onImportStackupPreset( wxCommandEvent& aEvent )
+{
+    wxFileDialog dialog( this, _( "Import Stackup Preset" ), wxEmptyString, wxEmptyString,
+                         _( "KiCad Pro stackup preset (*.json)|*.json|All files (*.*)|*.*" ),
+                         wxFD_OPEN | wxFD_FILE_MUST_EXIST );
+
+    if( dialog.ShowModal() != wxID_OK )
+        return;
+
+    wxString error;
+    std::optional<STACKUP_PRESET> preset = readStackupPresetFile( dialog.GetPath(), error );
+
+    if( !preset )
+    {
+        wxMessageBox( error, _( "Import Stackup Preset" ), wxOK | wxICON_ERROR, this );
+        return;
+    }
+
+    auto existing = std::find_if(
+            m_importedStackupPresets.begin(), m_importedStackupPresets.end(),
+            [&]( const STACKUP_PRESET& aCandidate )
+            {
+                return aCandidate.m_manufacturer == preset->m_manufacturer
+                       && aCandidate.m_name == preset->m_name;
+            } );
+
+    if( existing == m_importedStackupPresets.end() )
+        m_importedStackupPresets.push_back( *preset );
+    else
+        *existing = *preset;
+
+    m_activeStackupPreset = *preset;
+    rebuildPresetChoices();
+
+    for( size_t ii = 1; ii < m_visibleStackupPresets.size(); ++ii )
+    {
+        const STACKUP_PRESET* candidate = m_visibleStackupPresets[ii];
+
+        if( candidate && candidate->m_manufacturer == preset->m_manufacturer
+            && candidate->m_name == preset->m_name )
+        {
+            m_stackupPreset->SetSelection( static_cast<int>( ii ) );
+        }
+    }
+
+    applyStackupPreset( *preset );
+    aEvent.Skip();
+}
+
+
+wxString PANEL_SETUP_BOARD_STACKUP::serializeProjectImpedanceSettings()
+{
+    saveImpedanceRowState();
+
+    nlohmann::json root = {
+        { "format", "kicad-pro-project-stackup" },
+        { "version", 1 },
+        { "enabled", m_impedanceControlled->GetValue() },
+        { "layers", nlohmann::json::array() }
+    };
+
+    if( m_activeStackupPreset )
+        root["preset"] = serializeStackupPresetJson( *m_activeStackupPreset );
+
+    for( const auto& [layer, state] : m_impedanceState )
+    {
+        const int structure = std::clamp( static_cast<int>( state.m_structure ), 0, 5 );
+        const double spacingMm = pcbIUScale.IUTomm(
+                m_frame->ValueFromString( state.m_gap ) );
+
+        root["layers"].push_back( {
+            { "layer", static_cast<int>( layer ) },
+            { "structure", structure },
+            { "target_ohms", std::string( state.m_target.utf8_str() ) },
+            { "spacing_mm", spacingMm }
+        } );
+    }
+
+    return wxString::FromUTF8( root.dump() );
+}
+
+
+void PANEL_SETUP_BOARD_STACKUP::loadProjectImpedanceSettings()
+{
+    const auto property = m_board->GetProperties().find( KICAD_PRO_STACKUP_PROPERTY );
+
+    if( property == m_board->GetProperties().end() )
+        return;
+
+    try
+    {
+        const nlohmann::json root = nlohmann::json::parse(
+                std::string( property->second.utf8_str() ) );
+
+        if( root.value( "format", "" ) != "kicad-pro-project-stackup"
+            || root.value( "version", 0 ) != 1 )
+        {
+            return;
+        }
+
+        m_impedanceControlled->SetValue( root.value( "enabled", false ) );
+
+        if( root.contains( "preset" ) && root["preset"].is_string() )
+        {
+            wxString error;
+            std::optional<STACKUP_PRESET> preset = parseStackupPresetJson(
+                    root["preset"].get<std::string>(), error );
+
+            if( preset )
+            {
+                m_activeStackupPreset = *preset;
+                bool builtIn = false;
+
+                for( const STACKUP_PRESET& candidate : getStackupPresets() )
+                {
+                    if( candidate.m_manufacturer == preset->m_manufacturer
+                        && candidate.m_name == preset->m_name )
+                    {
+                        builtIn = true;
+                        break;
+                    }
+                }
+
+                if( !builtIn )
+                    m_importedStackupPresets.push_back( *preset );
+
+                rebuildPresetChoices();
+
+                for( size_t ii = 1; ii < m_visibleStackupPresets.size(); ++ii )
+                {
+                    const STACKUP_PRESET* candidate = m_visibleStackupPresets[ii];
+
+                    if( candidate && candidate->m_manufacturer == preset->m_manufacturer
+                        && candidate->m_name == preset->m_name )
+                    {
+                        m_stackupPreset->SetSelection( static_cast<int>( ii ) );
+                        break;
+                    }
+                }
+            }
+        }
+
+        m_impedanceState.clear();
+
+        for( const nlohmann::json& source : root.value( "layers", nlohmann::json::array() ) )
+        {
+            const int layerNumber = source.value( "layer", -1 );
+
+            if( layerNumber < 0 || layerNumber >= PCB_LAYER_ID_COUNT )
+                continue;
+
+            IMPEDANCE_STATE state;
+            state.m_structure = static_cast<IMPEDANCE_STRUCTURE>(
+                    std::clamp( source.value( "structure", 0 ), 0, 5 ) );
+            state.m_target = wxString::FromUTF8( source.value( "target_ohms", "50" ) );
+            state.m_gap = m_frame->StringFromValue(
+                    pcbIUScale.mmToIU( source.value( "spacing_mm", 0.2 ) ), true );
+            m_impedanceState[static_cast<PCB_LAYER_ID>( layerNumber )] = std::move( state );
+        }
+
+        rebuildImpedanceRows();
+        updateImpedancePanelVisibility();
+    }
+    catch( const std::exception& exception )
+    {
+        wxLogWarning( "Could not restore KiCad Pro stackup settings: %s",
+                      wxString::FromUTF8( exception.what() ) );
+    }
 }
 
 
@@ -2226,6 +2568,18 @@ static double coplanarImpedance( double aWidth, double aGap, double aHeight,
 }
 
 
+static double ipc2141MicrostripWidth( double aImpedance, double aCopperThickness,
+                                      double aHeight, double aEpsilonR )
+{
+    // Algebraic synthesis form of the IPC-2141 microstrip approximation.  Keeping the
+    // original 5.98 / 0.8 coefficients avoids the rounding introduced by displaying
+    // the equivalent expression as 7.48h - 1.25t.
+    return ( 5.98 * aHeight
+             / std::exp( aImpedance * std::sqrt( aEpsilonR + 1.41 ) / 87.0 )
+             - aCopperThickness ) / 0.8;
+}
+
+
 std::optional<double> PANEL_SETUP_BOARD_STACKUP::calculateTraceWidth(
         const IMPEDANCE_ROW& aRow, wxString& aError ) const
 {
@@ -2291,6 +2645,21 @@ std::optional<double> PANEL_SETUP_BOARD_STACKUP::calculateTraceWidth(
             aError = _( "Spacing must be greater than 0" );
             return std::nullopt;
         }
+    }
+
+    if( structure == IMPEDANCE_STRUCTURE::MICROSTRIP )
+    {
+        const double width = ipc2141MicrostripWidth( target, geometry->m_copperThickness,
+                                                      substrate->m_height,
+                                                      substrate->m_epsilonR );
+
+        if( !std::isfinite( width ) || width <= 0.0 )
+        {
+            aError = _( "No practical width was found for this geometry" );
+            return std::nullopt;
+        }
+
+        return width;
     }
 
     if( structure == IMPEDANCE_STRUCTURE::GROUNDED_COPLANAR

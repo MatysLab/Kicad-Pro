@@ -29,6 +29,7 @@
 #include <board.h>
 #include <map>
 #include <optional>
+#include <string>
 #include <widgets/unit_binder.h>
 #include <wx/gdicmn.h>
 
@@ -38,6 +39,7 @@
 #include "dielectric_material.h"
 
 class wxBitmapComboBox;
+class wxButton;
 class PANEL_SETUP_LAYERS;
 class PANEL_SETUP_BOARD_FINISH;
 class wxFlexGridSizer;
@@ -175,6 +177,7 @@ private:
         double   m_thicknessMm;
         double   m_epsilonR;
         bool     m_core;
+        double   m_lossTangent = 0.02;
     };
 
     struct STACKUP_PRESET
@@ -195,8 +198,16 @@ private:
     void onImpedanceControlled( wxCommandEvent& aEvent );
     void onImpedanceParameterChanged( wxCommandEvent& aEvent );
     void onApplyStackupPreset( wxCommandEvent& aEvent );
+    void onImportStackupPreset( wxCommandEvent& aEvent );
     void rebuildPresetChoices();
     void applyStackupPreset( const STACKUP_PRESET& aPreset );
+    void loadProjectImpedanceSettings();
+    wxString serializeProjectImpedanceSettings();
+    std::optional<STACKUP_PRESET> readStackupPresetFile( const wxString& aPath,
+                                                         wxString& aError ) const;
+    std::optional<STACKUP_PRESET> parseStackupPresetJson( const std::string& aJson,
+                                                          wxString& aError ) const;
+    std::string serializeStackupPresetJson( const STACKUP_PRESET& aPreset ) const;
     static const std::vector<STACKUP_PRESET>& getStackupPresets();
     std::optional<TRACE_GEOMETRY> getTraceGeometry( PCB_LAYER_ID aLayer ) const;
     std::optional<double> calculateTraceWidth( const IMPEDANCE_ROW& aRow,
@@ -343,11 +354,14 @@ private:
 
     wxPanel*                         m_impedancePanel = nullptr;
     wxChoice*                        m_stackupPreset = nullptr;
+    wxButton*                        m_importStackupPreset = nullptr;
     wxScrolledWindow*                m_impedanceGridWindow = nullptr;
     wxFlexGridSizer*                 m_impedanceGrid = nullptr;
     std::vector<IMPEDANCE_ROW>       m_impedanceRows;
     std::map<PCB_LAYER_ID, IMPEDANCE_STATE> m_impedanceState;
     std::vector<const STACKUP_PRESET*> m_visibleStackupPresets;
+    std::vector<STACKUP_PRESET>       m_importedStackupPresets;
+    std::optional<STACKUP_PRESET>     m_activeStackupPreset;
 };
 
 #endif      // #ifndef PANEL_SETUP_BOARD_STACKUP_H

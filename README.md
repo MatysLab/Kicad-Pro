@@ -28,6 +28,63 @@ Preset values are design inputs, not manufacturing guarantees. Confirm the final
 material properties, copper weight, and impedance requirements with the selected fabricator before
 releasing a board for production.
 
+The selected preset and controlled-impedance settings are stored in the `.kicad_pcb` file. This
+includes the imported preset definition, enabled state, and each copper layer's trace structure,
+target impedance, and spacing. Reopening or sharing the board therefore restores the same setup
+without requiring the original preset file.
+
+### Importing a stackup preset
+
+Select **Import...** beside **Stackup preset** and choose a UTF-8 JSON file using the following
+versioned format. All thickness values are expressed in millimetres. `dielectrics` must contain one
+array for every space between adjacent copper layers; each array can contain one or more core or
+prepreg sublayers.
+
+```json
+{
+  "format": "kicad-pro-stackup",
+  "version": 1,
+  "manufacturer": "Example Fab",
+  "name": "EX0416-7628",
+  "copper_thickness_mm": [0.035, 0.0175, 0.0175, 0.035],
+  "dielectrics": [
+    [
+      {
+        "type": "prepreg",
+        "material": "7628",
+        "thickness_mm": 0.2104,
+        "epsilon_r": 4.4,
+        "loss_tangent": 0.02
+      }
+    ],
+    [
+      {
+        "type": "core",
+        "material": "FR-4 core",
+        "thickness_mm": 1.065,
+        "epsilon_r": 4.6,
+        "loss_tangent": 0.02
+      }
+    ],
+    [
+      {
+        "type": "prepreg",
+        "material": "7628",
+        "thickness_mm": 0.2104,
+        "epsilon_r": 4.4,
+        "loss_tangent": 0.02
+      }
+    ]
+  ]
+}
+```
+
+Required fields are `format`, `version`, `manufacturer`, `name`, `copper_thickness_mm`, and
+`dielectrics`. Every dielectric sublayer requires `type`, `material`, `thickness_mm`, and
+`epsilon_r`; `loss_tangent` is optional and defaults to `0.02`. The copper-layer count must be an
+even number from 2 through 32, and the number of dielectric arrays must be exactly one less than the
+copper-layer count.
+
 ## Building
 
 KiCad Pro uses the same toolchain and platform requirements as upstream KiCad. See the official
