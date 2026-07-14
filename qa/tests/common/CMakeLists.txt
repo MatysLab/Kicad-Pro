@@ -72,6 +72,7 @@ set( QA_COMMON_SRCS
     test_reporting.cpp
     test_refdes_utils.cpp
     test_grid_helper.cpp
+    test_high_speed_network.cpp
     test_string_utils.cpp
     test_richio.cpp
     test_text_attributes.cpp

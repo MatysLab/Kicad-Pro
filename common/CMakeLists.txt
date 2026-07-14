@@ -88,6 +88,11 @@ install( FILES
 # Functions and data all need to use the #include <import_export.h> and be declared
 # as APIEXPORT
 set( KICOMMON_SRCS
+    # High-speed analysis foundation
+    high_speed/field_solver_adapter.cpp
+    high_speed/nport_network.cpp
+    high_speed/touchstone_reader.cpp
+
     # Fonts
     newstroke_font.cpp
     font/fontconfig.cpp
