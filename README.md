@@ -7,6 +7,26 @@ The project follows the KiCad codebase while developing additional capabilities 
 definition, manufacturing preparation, and electrical design. It is independently maintained
 and is not an official KiCad release.
 
+## Via Stitching
+
+KiCad Pro adds a professional Via Stitching tool to the PCB Editor. It is available from both the
+top toolbar and the **Place** menu and places the complete result as one undoable board operation.
+
+- Stitch inside selected copper zones or polygon shapes, or across matching zones on checked
+  copper layers.
+- Select the connection net, defaulting to `GND` when that net exists.
+- Set manual center-to-center spacing, with a 10 mm default.
+- Use RF spacing derived from frequency and effective dielectric constant at λg/10 or λg/20.
+- Configure via diameter and drill using the board's current via settings as defaults.
+- Avoid pads, existing tracks and vias, polygon edges, and via keepout areas.
+- Limit each operation to 10,000 vias to keep placement responsive and reviewable.
+
+The implementation is split between the
+[Via Stitching dialog](pcbnew/dialogs/dialog_via_stitching.cpp),
+[placement engine](pcbnew/tools/drawing_tool.cpp),
+[top toolbar](pcbnew/toolbars_pcb_editor.cpp), and
+[Place menu](pcbnew/menubar_pcb_editor.cpp).
+
 ## Controlled-impedance stackups
 
 The Board Setup **Physical Stackup** editor includes an integrated controlled-impedance workflow:

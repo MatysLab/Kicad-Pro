@@ -309,7 +309,8 @@ std::optional<TOOLBAR_CONFIGURATION> PCB_EDIT_TOOLBAR_SETTINGS::DefaultToolbarCo
         config.AppendAction( ACTIONS::save );
 
         config.AppendSeparator()
-              .AppendAction( PCB_ACTIONS::boardSetup );
+              .AppendAction( PCB_ACTIONS::boardSetup )
+              .AppendAction( PCB_ACTIONS::viaStitching );
 
         config.AppendSeparator()
               .AppendAction( ACTIONS::pageSettings )

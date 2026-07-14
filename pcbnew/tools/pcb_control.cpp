@@ -2450,6 +2450,25 @@ int PCB_CONTROL::UpdateMessagePanel( const TOOL_EVENT& aEvent )
                                                    b->GetItemDescription( m_frame, false ) ) );
         }
 
+        PCB_TRACK* trackA = dynamic_cast<PCB_TRACK*>( a );
+        PCB_TRACK* trackB = dynamic_cast<PCB_TRACK*>( b );
+
+        if( trackA && trackB && trackA->Type() != PCB_VIA_T && trackB->Type() != PCB_VIA_T )
+        {
+            double lengthA = 0.0;
+            double lengthB = 0.0;
+
+            std::tie( std::ignore, lengthA, std::ignore, std::ignore, std::ignore ) =
+                    m_frame->GetBoard()->GetTrackLength( *trackA );
+            std::tie( std::ignore, lengthB, std::ignore, std::ignore, std::ignore ) =
+                    m_frame->GetBoard()->GetTrackLength( *trackB );
+
+            msgItems.emplace_back( _( "L1" ), m_frame->MessageTextFromValue( lengthA ) );
+            msgItems.emplace_back( _( "L2" ), m_frame->MessageTextFromValue( lengthB ) );
+            msgItems.emplace_back( _( "ΔL" ),
+                                   m_frame->MessageTextFromValue( std::abs( lengthA - lengthB ) ) );
+        }
+
         BOARD_CONNECTED_ITEM* a_conn = dynamic_cast<BOARD_CONNECTED_ITEM*>( a );
         BOARD_CONNECTED_ITEM* b_conn = dynamic_cast<BOARD_CONNECTED_ITEM*>( b );
 

@@ -338,6 +338,14 @@ TOOL_ACTION PCB_ACTIONS::drawVia( TOOL_ACTION_ARGS()
         .Icon( BITMAPS::add_via )
         .Flags( AF_ACTIVATE ) );
 
+TOOL_ACTION PCB_ACTIONS::viaStitching( TOOL_ACTION_ARGS()
+        .Name( "pcbnew.InteractiveDrawing.viaStitching" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Via Stitching" ) )
+        .Tooltip( _( "Place a regular array of stitching vias in copper zones or polygons" ) )
+        .Icon( BITMAPS::add_via )
+        .Flags( AF_ACTIVATE ) );
+
 TOOL_ACTION PCB_ACTIONS::drawRuleArea( TOOL_ACTION_ARGS()
         .Name( "pcbnew.InteractiveDrawing.ruleArea" )
         .Scope( AS_GLOBAL )

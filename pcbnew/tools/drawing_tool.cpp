@@ -34,6 +34,7 @@
 #include <dialogs/dialog_barcode_properties.h>
 #include <dialogs/dialog_text_properties.h>
 #include <dialogs/dialog_track_via_size.h>
+#include <dialogs/dialog_via_stitching.h>
 #include <gal/graphics_abstraction_layer.h>
 #include <geometry/geometry_utils.h>
 #include <geometry/shape_segment.h>
@@ -4392,6 +4393,233 @@ int DRAWING_TOOL::DrawVia( const TOOL_EVENT& aEvent )
 }
 
 
+int DRAWING_TOOL::PlaceViaStitching( const TOOL_EVENT& aEvent )
+{
+    if( m_isFootprintEditor || !board() )
+        return 0;
+
+    DIALOG_VIA_STITCHING dialog( m_frame, board() );
+
+    if( dialog.ShowModal() != wxID_OK )
+        return 0;
+
+    const std::vector<PCB_LAYER_ID> layers = dialog.GetLayers();
+
+    if( layers.empty() || dialog.GetNetCode() <= 0 )
+    {
+        wxMessageBox( _( "Select at least one copper layer and a net." ),
+                      _( "Via Stitching" ), wxOK | wxICON_WARNING, m_frame );
+        return 0;
+    }
+
+    auto layerSelected =
+            [&]( PCB_LAYER_ID aLayer )
+            {
+                return std::find( layers.begin(), layers.end(), aLayer ) != layers.end();
+            };
+
+    std::vector<SHAPE_POLY_SET> regions;
+
+    if( dialog.GetSource() == DIALOG_VIA_STITCHING::SOURCE::SELECTED_POLYGONS )
+    {
+        PCB_SELECTION_TOOL* selectionTool = m_toolMgr->GetTool<PCB_SELECTION_TOOL>();
+
+        for( EDA_ITEM* selectedItem : selectionTool->GetSelection() )
+        {
+            if( ZONE* zone = dynamic_cast<ZONE*>( selectedItem ) )
+            {
+                bool layerMatches = false;
+
+                for( PCB_LAYER_ID layer : layers )
+                    layerMatches |= zone->IsOnLayer( layer );
+
+                if( !zone->GetIsRuleArea() && layerMatches && zone->Outline() )
+                    regions.emplace_back( *zone->Outline() );
+            }
+            else if( PCB_SHAPE* shape = dynamic_cast<PCB_SHAPE*>( selectedItem ) )
+            {
+                if( shape->GetShape() != SHAPE_T::POLY || !layerSelected( shape->GetLayer() ) )
+                    continue;
+
+                SHAPE_POLY_SET polygon;
+                shape->TransformShapeToPolygon( polygon, shape->GetLayer(), 0, ARC_HIGH_DEF,
+                                                ERROR_INSIDE );
+                regions.emplace_back( std::move( polygon ) );
+            }
+        }
+    }
+    else
+    {
+        for( ZONE* zone : board()->Zones() )
+        {
+            if( zone->GetIsRuleArea() || zone->GetNetCode() != dialog.GetNetCode() )
+                continue;
+
+            for( PCB_LAYER_ID layer : layers )
+            {
+                if( !zone->IsOnLayer( layer ) )
+                    continue;
+
+                std::shared_ptr<SHAPE_POLY_SET> filled = zone->GetFilledPolysList( layer );
+
+                if( filled && !filled->IsEmpty() )
+                    regions.emplace_back( *filled );
+                else if( zone->Outline() )
+                    regions.emplace_back( *zone->Outline() );
+            }
+        }
+    }
+
+    if( regions.empty() )
+    {
+        wxMessageBox( _( "No matching copper zones or selected polygons were found." ),
+                      _( "Via Stitching" ), wxOK | wxICON_INFORMATION, m_frame );
+        return 0;
+    }
+
+    const int spacing = dialog.GetSpacing();
+    const int diameter = dialog.GetViaDiameter();
+    const int drill = dialog.GetViaDrill();
+
+    if( spacing <= 0 || diameter <= drill || drill <= 0 )
+    {
+        wxMessageBox( _( "Via spacing and drill must be positive, and diameter must exceed drill." ),
+                      _( "Via Stitching" ), wxOK | wxICON_WARNING, m_frame );
+        return 0;
+    }
+
+    BOX2I bounds;
+
+    for( const SHAPE_POLY_SET& region : regions )
+        bounds.Merge( region.BBox() );
+
+    auto alignDown =
+            [spacing]( int aValue )
+            {
+                return static_cast<int>( std::floor( static_cast<double>( aValue ) / spacing )
+                                         * spacing );
+            };
+
+    std::vector<VECTOR2I> positions;
+    constexpr size_t MAX_STITCHING_VIAS = 10000;
+
+    for( int y = alignDown( bounds.GetTop() ); y <= bounds.GetBottom(); y += spacing )
+    {
+        for( int x = alignDown( bounds.GetLeft() ); x <= bounds.GetRight(); x += spacing )
+        {
+            const VECTOR2I position( x, y );
+            bool inside = false;
+
+            for( const SHAPE_POLY_SET& region : regions )
+            {
+                if( region.PointInside( position )
+                    && !region.CollideEdge( position, nullptr, diameter / 2 ) )
+                {
+                    inside = true;
+                    break;
+                }
+            }
+
+            if( !inside )
+                continue;
+
+            bool obstructed = false;
+
+            for( PCB_TRACK* track : board()->Tracks() )
+            {
+                if( track->HitTest( position, diameter / 2 ) )
+                {
+                    obstructed = true;
+                    break;
+                }
+            }
+
+            if( !obstructed )
+            {
+                for( ZONE* zone : board()->Zones() )
+                {
+                    if( !zone->GetIsRuleArea() || !zone->GetDoNotAllowVias() || !zone->Outline() )
+                        continue;
+
+                    bool appliesToLayer = false;
+
+                    for( PCB_LAYER_ID layer : layers )
+                        appliesToLayer |= zone->IsOnLayer( layer );
+
+                    if( appliesToLayer && zone->Outline()->PointInside( position ) )
+                    {
+                        obstructed = true;
+                        break;
+                    }
+                }
+            }
+
+            if( !obstructed )
+            {
+                for( FOOTPRINT* footprint : board()->Footprints() )
+                {
+                    for( PAD* pad : footprint->Pads() )
+                    {
+                        if( pad->HitTest( position, diameter / 2 ) )
+                        {
+                            obstructed = true;
+                            break;
+                        }
+                    }
+
+                    if( obstructed )
+                        break;
+                }
+            }
+
+            if( !obstructed )
+                positions.push_back( position );
+
+            if( positions.size() >= MAX_STITCHING_VIAS )
+                break;
+        }
+
+        if( positions.size() >= MAX_STITCHING_VIAS )
+            break;
+    }
+
+    if( positions.empty() )
+    {
+        wxMessageBox( _( "The selected area is too small for the requested via spacing." ),
+                      _( "Via Stitching" ), wxOK | wxICON_INFORMATION, m_frame );
+        return 0;
+    }
+
+    if( positions.size() >= MAX_STITCHING_VIAS )
+    {
+        wxMessageBox( _( "The result exceeds 10,000 vias. Increase the spacing or reduce the area." ),
+                      _( "Via Stitching" ), wxOK | wxICON_WARNING, m_frame );
+        return 0;
+    }
+
+    BOARD_COMMIT commit( m_frame );
+
+    for( const VECTOR2I& position : positions )
+    {
+        PCB_VIA* via = new PCB_VIA( board() );
+        via->SetViaType( VIATYPE::THROUGH );
+        via->SetLayerPair( F_Cu, B_Cu );
+        via->SetPosition( position );
+        via->SetWidth( PADSTACK::ALL_LAYERS, diameter );
+        via->SetDrill( drill );
+        via->SetNetCode( dialog.GetNetCode() );
+        via->SetIsFree( true );
+        commit.Add( via );
+    }
+
+    commit.Push( wxString::Format( _( "Add %zu stitching vias" ), positions.size() ) );
+    m_frame->OnModify();
+    m_frame->GetCanvas()->Refresh();
+
+    return 0;
+}
+
+
 const unsigned int DRAWING_TOOL::WIDTH_STEP = pcbIUScale.mmToIU( 0.1 );
 
 
@@ -4415,6 +4643,7 @@ void DRAWING_TOOL::setTransitions()
     Go( &DRAWING_TOOL::DrawZone,              PCB_ACTIONS::drawZoneCutout.MakeEvent() );
     Go( &DRAWING_TOOL::DrawZone,              PCB_ACTIONS::drawSimilarZone.MakeEvent() );
     Go( &DRAWING_TOOL::DrawVia,               PCB_ACTIONS::drawVia.MakeEvent() );
+    Go( &DRAWING_TOOL::PlaceViaStitching,     PCB_ACTIONS::viaStitching.MakeEvent() );
     Go( &DRAWING_TOOL::PlacePoint,            PCB_ACTIONS::placePoint.MakeEvent() );
     Go( &DRAWING_TOOL::PlaceReferenceImage,   PCB_ACTIONS::placeReferenceImage.MakeEvent() );
     Go( &DRAWING_TOOL::PlaceText,             PCB_ACTIONS::placeText.MakeEvent() );

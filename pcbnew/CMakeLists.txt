@@ -162,6 +162,7 @@ set( PCBNEW_DIALOGS
     dialogs/dialog_track_via_properties.cpp
     dialogs/dialog_track_via_properties_base.cpp
     dialogs/dialog_track_via_size.cpp
+    dialogs/dialog_via_stitching.cpp
     dialogs/dialog_track_via_size_base.cpp
     dialogs/dialog_tuning_pattern_properties.cpp
     dialogs/dialog_tuning_pattern_properties_base.cpp
