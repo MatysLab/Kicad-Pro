@@ -66,6 +66,9 @@ jobs:
         run: |
           ./build.ps1 -Init
           ./build.ps1 -Vcpkg -Arch x64 -BuildConfigName kicad-pro
+          # Build-Vcpkg records its path and switches the packager to its
+          # bundled CMake/Ninja toolchain, so initialize once more afterward.
+          ./build.ps1 -Init
 
       - name: Build KiCad Pro
         shell: powershell
