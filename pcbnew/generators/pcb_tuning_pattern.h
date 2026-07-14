@@ -388,6 +388,7 @@ public:
     }
 
     LENGTH_TUNING_MODE GetTuningMode() const { return m_tuningMode; }
+    void               SetTuningMode( LENGTH_TUNING_MODE aMode ) { m_tuningMode = aMode; }
 
     PNS::ROUTER_MODE GetPNSMode()
     {
@@ -514,7 +515,7 @@ protected:
         std::swap( *this, *static_cast<PCB_TUNING_PATTERN*>( aImage ) );
     }
 
-    bool recoverBaseline( PNS::ROUTER* aRouter );
+    bool recoverBaseline( PNS::ROUTER* aRouter, int aPNSLayer );
 
     bool baselineValid();
 

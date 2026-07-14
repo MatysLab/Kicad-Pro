@@ -1647,6 +1647,16 @@ int BOARD_EDITOR_CONTROL::modifyLockSelected( MODIFY_MODE aMode )
             board_item->SetLocked( true );
         else
             board_item->SetLocked( false );
+
+        if( aMode == OFF && board_item->Type() == PCB_FOOTPRINT_T )
+        {
+            board_item->RunOnChildren(
+                    []( BOARD_ITEM* child )
+                    {
+                        child->SetLocked( false );
+                    },
+                    RECURSE_MODE::RECURSE );
+        }
     }
 
     if( !commit.Empty() )
@@ -1829,6 +1839,9 @@ int BOARD_EDITOR_CONTROL::ZoneDuplicate( const TOOL_EVENT& aEvent )
     newZone->ClearSelected();
     newZone->UnFill();
     zoneSettings.ExportSetting( *newZone );
+
+    if( !newZone->GetZoneName().IsEmpty() )
+        newZone->SetZoneName( board()->GetUniqueZoneName( newZone->GetZoneName() ) );
 
     // If the new zone is on the same layer(s) as the initial zone,
     // offset it a bit so it can more easily be picked.
@@ -2159,6 +2172,9 @@ int BOARD_EDITOR_CONTROL::AssignNetclass( const TOOL_EVENT& aEvent )
 
                 sTool->FilterCollectorForLockedItems( aCollector );
             } );
+
+    if( selectionTool->ReportFilteredLockedItems() )
+        return 0;
 
     std::set<wxString> netNames;
     std::set<int>      netCodes;

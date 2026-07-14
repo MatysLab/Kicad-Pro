@@ -54,6 +54,7 @@
 #include <sch_bus_entry.h>
 #include <sch_commit.h>
 #include <sch_edit_frame.h>
+#include <sch_draw_panel.h>
 #include <sch_io/kicad_legacy/sch_io_kicad_legacy.h>
 #include <sch_file_versions.h>
 #include <sch_line.h>
@@ -440,11 +441,19 @@ bool SCH_EDIT_FRAME::OpenProjectFiles( const std::vector<wxString>& aFileSet, in
         // update some of the needed schematic settings such as drawing defaults
         LoadProjectSettings();
 
-        // It's possible the schematic parser fixed errors due to bugs so warn the user
-        // that the schematic has been fixed (modified).
         SCH_SHEET_LIST sheetList = Schematic().Hierarchy();
 
-        if( sheetList.IsModified() )
+        bool repairedPageNumbers = false;
+
+        if( sheetList.AllSheetPageNumbersEmpty() )
+            sheetList.SetInitialPageNumbers();
+        else
+            repairedPageNumbers = sheetList.RepairPageNumbers();
+
+        // It's possible the schematic parser fixed errors due to bugs, or that we reassigned
+        // duplicate or blank sheet page numbers, so warn the user that the schematic has been
+        // fixed (modified).
+        if( sheetList.IsModified() || repairedPageNumbers )
         {
             DisplayInfoMessage( this,
                                 _( "An error was found when loading the schematic that has "
@@ -452,9 +461,6 @@ bool SCH_EDIT_FRAME::OpenProjectFiles( const std::vector<wxString>& aFileSet, in
                                    "repair the broken file or it may not be usable with other "
                                    "versions of KiCad." ) );
         }
-
-        if( sheetList.AllSheetPageNumbersEmpty() )
-            sheetList.SetInitialPageNumbers();
 
         UpdateFileHistory( fullFileName );
 
@@ -735,6 +741,11 @@ bool SCH_EDIT_FRAME::OpenProjectFiles( const std::vector<wxString>& aFileSet, in
         Schematic().ConnectionGraph()->Reset();
 
         SetScreen( GetCurrentSheet().LastScreen() );
+
+        // Repaired page numbers changed in-memory sheet instances; flag the schematic so the
+        // fixed numbering can be saved instead of silently reverting on the next load.
+        if( repairedPageNumbers )
+            OnModify();
 
         wxLogTrace( traceSchCurrentSheet,
                    "After SetScreen: Current sheet path='%s', size=%zu",
@@ -1469,6 +1480,21 @@ bool SCH_EDIT_FRAME::SaveProject( bool aSaveAs )
 
         if( !GetSettingsManager()->TriggerBackupIfNeeded( backupReporter ) )
             SetStatusText( backupReporter.GetMessages(), 0 );
+    }
+
+    // Restore the virtual page numbers that were modified during save. When saving, screens are
+    // assigned page number 1 (single use) or 0 (multiple uses) for serialization purposes.
+    // We restore all screens here, not just the current one, because other code paths (e.g.
+    // ERC tree model, temporary sheet switches) may read any screen's virtual page number.
+    for( const SCH_SHEET_PATH& sheet : Schematic().Hierarchy() )
+        sheet.LastScreen()->SetVirtualPageNumber( sheet.GetVirtualPageNumber() );
+
+    SetSheetNumberAndCount();
+
+    if( GetCanvas() && GetCanvas()->GetView() )
+    {
+        GetCanvas()->GetView()->RefreshDrawingSheetPageInfo();
+        GetCanvas()->Refresh();
     }
 
     updateTitle();

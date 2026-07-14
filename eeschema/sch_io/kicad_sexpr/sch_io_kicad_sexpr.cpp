@@ -30,6 +30,7 @@
 
 #include <base_units.h>
 #include <bitmap_base.h>
+#include <common.h> // ExpandTextVars
 #include <wildcards_and_files_ext.h>
 #include <build_version.h>
 #include <sch_selection.h>
@@ -194,7 +195,9 @@ void SCH_IO_KICAD_SEXPR::loadHierarchy( const SCH_SHEET_PATH& aParentSheetPath, 
         // SCH_SCREEN objects store the full path and file name where the SCH_SHEET object only
         // stores the file name and extension.  Add the project path to the file name and
         // extension to compare when calling SCH_SHEET::SearchHierarchy().
-        wxFileName fileName = aSheet->GetFileName();
+        // Resolve text variables in the filename. The field keeps the raw text for portability.
+        wxFileName fileName =
+                m_schematic ? ExpandTextVars( aSheet->GetFileName(), &m_schematic->Project() ) : aSheet->GetFileName();
 
         if( !fileName.IsAbsolute() )
             fileName.MakeAbsolute( m_currentPath.top() );
@@ -891,6 +894,12 @@ void SCH_IO_KICAD_SEXPR::saveSymbol( SCH_SYMBOL* aSymbol, const SCHEMATIC& aSche
                     continue;
                 }
             }
+
+            // The autosave timer serializes a live schematic whose symbol instances a concurrent
+            // edit can leave transiently pathless, so a size-checked source can still copy empty
+            // here.  Indexing an empty path dereferences null (Sentry KICAD-173B), so skip it.
+            if( pathToCheck.empty() )
+                continue;
 
             // Check if this instance is orphaned (no matching sheet path)
             // For virtual root, we check if the first real sheet matches one of the top-level sheets

@@ -333,6 +333,10 @@ if( UNIX AND NOT APPLE )
     )
 endif()
 
+list( APPEND KICOMMON_SRCS
+    navlib_safe_init.cpp
+)
+
 if( KICAD_IPC_API )
     set( KICOMMON_SRCS
         ${KICOMMON_SRCS}
@@ -448,6 +452,15 @@ if( APPLE )
 endif()
 
 target_compile_definitions( kicommon PRIVATE KICOMMON_DLL=1 )
+
+# Feed the desktop application identifiers to the Wayland app_id logic in pgm_base.cpp
+# so the compositor matches windows to the installed desktop files (regular, Flatpak,
+# and Nightly builds each install a different reverse-DNS prefix).
+if( UNIX AND NOT APPLE )
+    set_property( SOURCE pgm_base.cpp APPEND PROPERTY COMPILE_DEFINITIONS
+        KICAD_DESKTOP_APP_NAME="${KICAD_APP_NAME}"
+        KICAD_DESKTOP_APP_PREFIX="${KICAD_APP_PREFIX}" )
+endif()
 
 target_include_directories( kicommon
     PUBLIC

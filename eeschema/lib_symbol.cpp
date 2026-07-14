@@ -122,8 +122,8 @@ void LIB_SYMBOL::cacheShownDescription()
 void LIB_SYMBOL::SetDescription( const wxString& aDescription )
 {
     GetDescriptionField().SetText( aDescription );
-    cacheSearchTerms();
     cacheShownDescription();
+    cacheSearchTerms();
 }
 
 
@@ -164,8 +164,8 @@ void LIB_SYMBOL::cacheSearchTerms()
 
     // Order matters, see SEARCH_TERM_CACHE_INDEX
     m_searchTermsCache.emplace_back( SEARCH_TERM( GetLibNickname(), 4 ) );
-    m_searchTermsCache.emplace_back( SEARCH_TERM( GetName(), 8 ) );
-    m_searchTermsCache.emplace_back( SEARCH_TERM( GetLIB_ID().Format(), 16 ) );
+    m_searchTermsCache.emplace_back( SEARCH_TERM( GetName(), 8, true ) );
+    m_searchTermsCache.emplace_back( SEARCH_TERM( GetLIB_ID().Format(), 16, true ) );
 
     wxStringTokenizer keywordTokenizer( GetShownKeyWords(), " \t\r\n", wxTOKEN_STRTOK );
 
@@ -1466,9 +1466,10 @@ const BOX2I LIB_SYMBOL::GetBodyBoundingBox( int aUnit, int aBodyStyle, bool aInc
 
 void LIB_SYMBOL::RefreshLibraryTreeCaches()
 {
+    // cacheSearchTerms() reads the shown-description cache, so refresh it first.
+    cacheShownDescription();
     cacheSearchTerms();
     cachePinCount();
-    cacheShownDescription();
     cacheChooserFields();
 }
 
@@ -1538,6 +1539,102 @@ void LIB_SYMBOL::CopyFields( std::vector<SCH_FIELD>& aList )
 
     for( SCH_FIELD* field : orderedFields )
         aList.emplace_back( *field );
+}
+
+
+void LIB_SYMBOL::SyncFieldsFromParent( const LIB_FIELD_SYNC_OPTIONS& aOptions )
+{
+    std::shared_ptr<LIB_SYMBOL> parent = m_parent.lock();
+
+    if( !parent )
+        return;
+
+    std::unique_ptr<LIB_SYMBOL> flattenedParent = parent->Flatten();
+
+    auto selected =
+            [&]( const wxString& aFieldName )
+            {
+                return aOptions.m_updateAllFields
+                       || aOptions.m_updateFields.count( aFieldName ) > 0;
+            };
+
+    std::vector<SCH_FIELD> fields;
+    std::vector<SCH_FIELD> result;
+    CopyFields( fields );
+
+    for( SCH_FIELD& field : fields )
+    {
+        bool       copy = true;
+        SCH_FIELD* parentField = nullptr;
+
+        if( selected( field.GetName() ) )
+        {
+            if( field.IsMandatory() )
+                parentField = flattenedParent->GetField( field.GetId() );
+            else
+                parentField = flattenedParent->GetField( field.GetName() );
+
+            if( parentField )
+            {
+                bool resetText = parentField->GetText().IsEmpty() ? aOptions.m_resetEmptyText
+                                                                  : aOptions.m_resetText;
+
+                if( resetText )
+                    field.SetText( parentField->GetText() );
+
+                if( aOptions.m_resetVisibility )
+                {
+                    field.SetVisible( parentField->IsVisible() );
+                    field.SetNameShown( parentField->IsNameShown() );
+                }
+
+                if( aOptions.m_resetEffects )
+                {
+                    // SetAttributes() also overwrites the visible bit and position, so save
+                    // and restore them here.
+                    bool     visible = field.IsVisible();
+                    VECTOR2I pos = field.GetPosition();
+
+                    field.SetAttributes( *parentField );
+
+                    field.SetVisible( visible );
+                    field.SetPosition( pos );
+                }
+
+                if( aOptions.m_resetPositions )
+                    field.SetTextPos( parentField->GetTextPos() );
+            }
+            else if( aOptions.m_removeExtraFields )
+            {
+                copy = false;
+            }
+        }
+
+        if( copy )
+            result.emplace_back( std::move( field ) );
+    }
+
+    std::vector<SCH_FIELD*> parentFields;
+
+    flattenedParent->GetFields( parentFields );
+
+    for( SCH_FIELD* parentField : parentFields )
+    {
+        if( !selected( parentField->GetName() ) )
+            continue;
+
+        if( !GetField( parentField->GetName() ) )
+        {
+            result.emplace_back( this, FIELD_T::USER );
+            SCH_FIELD* newField = &result.back();
+
+            newField->SetName( parentField->GetCanonicalName() );
+            newField->SetText( parentField->GetText() );
+            newField->SetAttributes( *parentField );   // Includes visible bit and position
+        }
+    }
+
+    SetFields( result );
 }
 
 
@@ -2190,8 +2287,15 @@ int LIB_SYMBOL::Compare( const LIB_SYMBOL& aRhs, int aCompareFlags, REPORTER* aR
 
             if( tmp == 0 )
             {
+                int fieldCompareFlags = aCompareFlags;
+
+                // SCH_FIELD::compare() injects SKIP_TST_POS for ERC, but it is bypassed
+                // by the base-class call below, so mirror it here (issue 24657).
+                if( aCompareFlags & SCH_ITEM::COMPARE_FLAGS::ERC )
+                    fieldCompareFlags |= SCH_ITEM::COMPARE_FLAGS::SKIP_TST_POS;
+
                 // Fall back to base class comparison for other properties
-                tmp = aField->SCH_ITEM::compare( *bField, aCompareFlags );
+                tmp = aField->SCH_ITEM::compare( *bField, fieldCompareFlags );
             }
 
             if( tmp != 0 )

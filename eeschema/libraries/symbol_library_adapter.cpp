@@ -195,7 +195,15 @@ std::vector<wxString> SYMBOL_LIBRARY_ADAPTER::GetSymbolNames( const wxString& aN
         if( aType == SYMBOL_TYPE::POWER_ONLY )
             options[PropPowerSymsOnly] = "";
 
-        schplugin( lib )->EnumerateSymbolLib( namesAS, getUri( lib->row ), &options );
+        try
+        {
+            schplugin( lib )->EnumerateSymbolLib( namesAS, getUri( lib->row ), &options );
+        }
+        catch( const IO_ERROR& e )
+        {
+            wxLogTrace( traceLibraries, "Sym: Exception enumerating library %s: %s",
+                        lib->row->Nickname(), e.What() );
+        }
     }
 
     for( const wxString& name : namesAS )
@@ -345,13 +353,22 @@ std::vector<SUB_LIBRARY> SYMBOL_LIBRARY_ADAPTER::GetSubLibraries( const wxString
     {
         const LIB_DATA* rowData = *result;
 
-        std::vector<wxString> names;
-        schplugin( rowData )->GetSubLibraryNames( names );
-
-        for( const wxString& name : names )
+        try
         {
-            ret.emplace_back( SUB_LIBRARY { .nickname = name,
-                                            .description = schplugin( rowData )->GetSubLibraryDescription( name ) } );
+            std::vector<wxString> names;
+            schplugin( rowData )->GetSubLibraryNames( names );
+
+            for( const wxString& name : names )
+            {
+                ret.emplace_back( SUB_LIBRARY {
+                        .nickname = name,
+                        .description = schplugin( rowData )->GetSubLibraryDescription( name ) } );
+            }
+        }
+        catch( const IO_ERROR& e )
+        {
+            wxLogTrace( traceLibraries, "Sym: Exception getting sub-libraries for %s: %s",
+                        aNickname, e.What() );
         }
     }
 
@@ -398,4 +415,17 @@ int SYMBOL_LIBRARY_ADAPTER::GetModifyHash() const
     }
 
     return hash;
+}
+
+
+std::optional<int> SYMBOL_LIBRARY_ADAPTER::GetLibraryModifyHash( const wxString& aNickname ) const
+{
+    if( std::optional<const LIB_DATA*> result = fetchIfLoaded( aNickname ) )
+    {
+        const LIB_DATA* rowData = *result;
+        wxCHECK( rowData->row, std::nullopt );
+        return schplugin( rowData )->GetModifyHash();
+    }
+
+    return std::nullopt;
 }

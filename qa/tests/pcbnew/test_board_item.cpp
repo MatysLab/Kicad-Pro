@@ -28,6 +28,7 @@
 
 // Code under test
 #include <board.h>
+#include <board_design_settings.h>
 #include <netinfo.h>
 #include <board_item.h>
 #include <footprint.h>
@@ -431,6 +432,48 @@ BOOST_AUTO_TEST_CASE( ResolveItemCachePurgedOnRemoveAllNets )
     board.RemoveAll();
 
     BOOST_CHECK( board.ResolveItem( netId, true ) == nullptr );
+}
+
+
+// Regression test for issue #24696: a grouped zone left its group after undo/redo of a fill.
+// SwapItemData() (used by undo/redo and commit revert) must not move group membership, which
+// is a structural back-reference rather than swappable item data.
+BOOST_AUTO_TEST_CASE( Issue24696_SwapItemDataKeepsGroupMembership )
+{
+    PCB_GROUP group( &m_board );
+    ZONE      live( &m_board );
+    ZONE      image( &m_board );
+
+    // Mirror the undo swap: BOARD::Remove() has already stripped the live item's group,
+    // while the undo image still carries the membership.
+    live.SetParentGroup( nullptr );
+    image.SetParentGroup( &group );
+
+    live.SwapItemData( &image );
+
+    BOOST_CHECK( live.GetParentGroup() == nullptr );
+    BOOST_CHECK( image.GetParentGroup() == &group );
+
+    image.SetParentGroup( nullptr );
+}
+
+
+// Partial hardening for the BOARD::RecordDRCExclusions crash family (Sentry KICAD-YT2,
+// KICAD-YTA).  A PCB_MARKER may legitimately carry a null RC_ITEM (its ctor and dtor both guard
+// the member), but SerializeToString() dereferences it unconditionally, so recording exclusions
+// during a project save or window close faulted on such a marker.
+BOOST_AUTO_TEST_CASE( RecordDRCExclusionsSkipsMarkerWithoutRCItem )
+{
+    BOARD board;
+
+    PCB_MARKER* marker = new PCB_MARKER( nullptr, VECTOR2I( 0, 0 ) );
+    marker->SetExcluded( true );
+    board.Add( marker );
+
+    BOOST_CHECK_NO_THROW( board.RecordDRCExclusions() );
+
+    // The item-less marker has no violation to serialize, so nothing is persisted.
+    BOOST_CHECK( board.GetDesignSettings().m_DrcExclusions.empty() );
 }
 
 

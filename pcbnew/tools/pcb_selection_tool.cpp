@@ -633,6 +633,12 @@ void PCB_SELECTION_TOOL::EnterGroup()
 
     m_toolMgr->ProcessEvent( EVENTS::SelectedEvent );
 
+    // Processing the selection event can re-enter the tool and ExitGroup(), which clears
+    // m_enteredGroup. If that happened, don't operate on the now-stale (possibly null) group
+    // or we would hide/overlay a null item and crash (issue #24391).
+    if( m_enteredGroup != aGroup )
+        return;
+
     view()->Hide( m_enteredGroup, true );
     m_enteredGroupOverlay.Add( m_enteredGroup );
     view()->Update( &m_enteredGroupOverlay );
@@ -696,6 +702,15 @@ PCB_SELECTION& PCB_SELECTION_TOOL::RequestSelection( CLIENT_SELECTION_FILTER aCl
         }
 
         aClientFilter( VECTOR2I(), collector, this );
+
+        // Locked items were filtered with Override locks off. Keep the selection and return an
+        // empty one so the action does nothing. The banner then prompts to enable the override.
+        if( m_lockedItemsFiltered )
+        {
+            m_frame->GetCanvas()->ForceRefresh();
+            m_blockedSelection.Clear();
+            return m_blockedSelection;
+        }
 
         for( EDA_ITEM* item : collector )
         {
@@ -4545,7 +4560,7 @@ void PCB_SELECTION_TOOL::GuessSelectionCandidates( GENERAL_COLLECTOR& aCollector
 }
 
 
-void PCB_SELECTION_TOOL::ReportFilteredLockedItems()
+bool PCB_SELECTION_TOOL::ReportFilteredLockedItems()
 {
     if( m_lockedItemsFiltered && m_frame )
     {
@@ -4553,6 +4568,24 @@ void PCB_SELECTION_TOOL::ReportFilteredLockedItems()
                                         "Enable 'Override locks' to operate on them." ),
                                      true );
     }
+
+    return m_lockedItemsFiltered;
+}
+
+
+bool PCB_SELECTION_TOOL::HasLockedDescendant( const BOARD_ITEM* aItem )
+{
+    bool lockedDescendant = false;
+
+    aItem->RunOnChildren(
+            [&]( BOARD_ITEM* curr_item )
+            {
+                if( !curr_item->GetParentFootprint() && curr_item->IsLocked() )
+                    lockedDescendant = true;
+            },
+            RECURSE_MODE::RECURSE );
+
+    return lockedDescendant;
 }
 
 
@@ -4566,17 +4599,8 @@ void PCB_SELECTION_TOOL::FilterCollectorForLockedItems( GENERAL_COLLECTOR& aColl
         for( int i = (int) aCollector.GetCount() - 1; i >= 0; --i )
         {
             BOARD_ITEM* item = aCollector[i];
-            bool        lockedDescendant = false;
 
-            item->RunOnChildren(
-                    [&]( BOARD_ITEM* curr_item )
-                    {
-                        if( curr_item->IsLocked() )
-                            lockedDescendant = true;
-                    },
-                    RECURSE_MODE::RECURSE );
-
-            if( item->IsLocked() || lockedDescendant )
+            if( item->IsLocked() || HasLockedDescendant( item ) )
             {
                 aCollector.Remove( item );
                 m_lockedItemsFiltered = true;

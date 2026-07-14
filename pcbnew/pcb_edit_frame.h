@@ -306,6 +306,10 @@ public:
      */
     void SetActiveLayer( PCB_LAYER_ID aLayer, bool aForceRedraw );
 
+    /// View update flags an item needs when the active layer changes. Static for testing.
+    static int activeLayerUpdateFlags( const BOARD_ITEM* aItem, PCB_LAYER_ID aOldLayer,
+                                       PCB_LAYER_ID aNewLayer, HIGH_CONTRAST_MODE aContrastMode );
+
     void OnDisplayOptionsChanged() override;
 
     /**
@@ -801,6 +805,15 @@ protected:
      * @return true if the auto save was successful.
      */
     bool doAutoSave() override { return DoAutoSave(); }
+
+    bool canRunAutoSave() const override;
+
+    /**
+     * Return true when an interactive tool operation (routing, dragging, point editing,
+     * zone filling, or a blocked undo/redo) is currently in progress.  Used to gate both
+     * API command acceptance and autosave so neither stomps on a live edit.
+     */
+    bool interactiveOperationInProgress() const;
 
     /**
      * Load the given filename but sets the path to the current project path.

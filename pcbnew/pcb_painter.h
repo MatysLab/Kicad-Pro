@@ -276,6 +276,17 @@ protected:
     int                 m_holePlatingThickness;
     int                 m_lockedShadowMargin;
 };
+
+
+/**
+ * Decide which GAL draw pass paints a zone's outline.
+ *
+ * When the outline is the zone's only visual (rule area, or outline-only display) it is drawn on
+ * the zone layer, which sorts above copper, so tracks and pads can't paint over it. A zone shown
+ * filled draws its outline on the copper layer, beneath its own fill on the zone layer.
+ */
+bool ZoneOutlineDrawnOnLayer( bool aOutlineOnly, int aLayer );
+
 } // namespace KIGFX
 
 #endif /* PCB_PAINTER_H */

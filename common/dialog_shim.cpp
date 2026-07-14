@@ -318,6 +318,57 @@ void DIALOG_SHIM::finishDialogSettings()
 }
 
 
+wxRect ClampRectToDisplay( const wxRect& aRect, const wxRect& aClientArea )
+{
+    wxRect rect = aRect;
+
+    // A window can never be larger than the display that holds it.
+    rect.width = std::min( rect.width, aClientArea.width );
+    rect.height = std::min( rect.height, aClientArea.height );
+
+    rect.x = std::clamp( rect.x, aClientArea.x, aClientArea.GetRight() - rect.width + 1 );
+    rect.y = std::clamp( rect.y, aClientArea.y, aClientArea.GetBottom() - rect.height + 1 );
+
+    return rect;
+}
+
+
+void DIALOG_SHIM::clampToWorkArea()
+{
+    // A dialog not yet mapped onto a monitor reports no display, so fall back to the parent's
+    // monitor rather than blindly clamping against display zero on a multi-head setup.
+    int displayIdx = wxDisplay::GetFromWindow( this );
+
+    if( displayIdx == wxNOT_FOUND && m_parent )
+        displayIdx = wxDisplay::GetFromWindow( m_parent );
+
+    if( displayIdx == wxNOT_FOUND )
+        displayIdx = 0;
+
+    wxRect clientArea = wxDisplay( (unsigned int) displayIdx ).GetClientArea();
+
+    if( clientArea.width <= 0 || clientArea.height <= 0 )
+        return;
+
+    // The minimum size must shrink first, otherwise SetSize() below cannot honour a cap that
+    // is smaller than a stale minimum restored from a larger monitor.
+    wxSize minSize = GetMinSize();
+    wxSize clampedMin( std::min( minSize.x, clientArea.width ),
+                       std::min( minSize.y, clientArea.height ) );
+
+    if( clampedMin != minSize )
+        SetMinSize( clampedMin );
+
+    // Cap the size to the work area and pull the whole dialog back on-screen. Geometry restored
+    // from a different (possibly higher-DPI) monitor can otherwise land off-screen or oversized.
+    wxRect current( GetPosition(), GetSize() );
+    wxRect clamped = ClampRectToDisplay( current, clientArea );
+
+    if( clamped != current )
+        SetSize( clamped.x, clamped.y, clamped.width, clamped.height, 0 );
+}
+
+
 void DIALOG_SHIM::setSizeInDU( int x, int y )
 {
     wxSize sz( x, y );
@@ -351,21 +402,38 @@ void DIALOG_SHIM::SetPosition( const wxPoint& aNewPosition )
 }
 
 
-void DIALOG_SHIM::focusParentCanvas()
+void DIALOG_SHIM::focusParentCanvas( bool aDeferUntilFrameActive )
 {
-    if( m_parentFrame )
-    {
-        wxWindow* canvas = m_parentFrame->GetToolCanvas();
+    wxWindow* toolCanvas = m_parentFrame ? m_parentFrame->GetToolCanvas() : nullptr;
+    wxWindow* target = toolCanvas ? toolCanvas : m_parent;
 
-        if( canvas )
-        {
-            canvas->SetFocus();
-            return;
-        }
-    }
+    if( !target )
+        return;
 
-    if( m_parent )
-        m_parent->SetFocus();
+    target->SetFocus();
+
+    if( !aDeferUntilFrameActive || !toolCanvas )
+        return;
+
+#ifdef __WXGTK__
+    // A quasi-modal dialog is still the active top-level window when its nested event loop exits,
+    // so the SetFocus() above is undone when the dialog is destroyed and GTK restores the frame's
+    // previously-focused widget. Re-assert focus once the event loop has settled, otherwise
+    // keyboard events keep routing to the stale owner until the mouse re-enters the canvas.
+    EDA_BASE_FRAME* frame = m_parentFrame;
+
+    frame->CallAfter(
+            [frame]()
+            {
+                // Skip if another dialog grabbed the activation in the meantime, otherwise we
+                // would raise the frame from behind a chained modal dialog.
+                if( !KIPLATFORM::UI::IsWindowActive( frame ) )
+                    return;
+
+                if( wxWindow* canvas = frame->GetToolCanvas() )
+                    canvas->SetFocus();
+            } );
+#endif
 }
 
 
@@ -443,11 +511,21 @@ bool DIALOG_SHIM::Show( bool show )
             Centre();
         }
 
-        if( wxDisplay::GetFromWindow( this ) == wxNOT_FOUND )
+        // Re-center if the title bar would land on no display. Testing a point inside the title
+        // bar (not the window corner) ignores the negative border offset of maximized windows.
+        wxPoint grabPoint = GetPosition();
+        grabPoint.x += GetSize().x / 2;
+        grabPoint.y += FromDIP( 15 );
+
+        if( wxDisplay::GetFromPoint( grabPoint ) == wxNOT_FOUND )
             Centre();
 
         m_userPositioned = false;
         m_userResized = false;
+
+        // Cap size and pull the dialog back on-screen here, after the minimum has been
+        // (re)established above, so the clamp is not overwritten.
+        clampToWorkArea();
 
         KIPLATFORM::UI::EnsureVisible( this );
     }
@@ -1447,7 +1525,7 @@ int DIALOG_SHIM::ShowQuasiModal()
     event_loop.Run();
 
     m_qmodal_showing = false;
-    focusParentCanvas();
+    focusParentCanvas( true );
 
     return GetReturnCode();
 }
