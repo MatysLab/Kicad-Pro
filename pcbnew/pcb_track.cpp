@@ -36,6 +36,7 @@
 #include <layer_range.h>
 #include <length_delay_calculation/length_delay_calculation.h>
 #include <lset.h>
+#include <cmath>
 #include <cstdlib>
 #include <string_utils.h>
 #include <view/view.h>
@@ -2339,6 +2340,45 @@ void PCB_TRACK::GetMsgPanelInfo( EDA_DRAW_FRAME* aFrame, std::vector<MSG_PANEL_I
 
     aList.emplace_back( _( "Width" ), aFrame->MessageTextFromValue( m_width ) );
 
+    if( board )
+    {
+        int copperThickness = 0;
+
+        for( const BOARD_STACKUP_ITEM* stackupItem :
+             board->GetDesignSettings().GetStackupDescriptor().GetList() )
+        {
+            if( stackupItem->GetType() == BS_ITEM_TYPE_COPPER
+                && stackupItem->GetBrdLayerId() == GetLayer() )
+            {
+                copperThickness = stackupItem->GetThickness();
+                break;
+            }
+        }
+
+        if( copperThickness <= 0 )
+            copperThickness = BOARD_STACKUP_ITEM::GetCopperDefaultThickness();
+
+        // Match KiCad's Track Width Calculator: IPC-2221 current capacity for a
+        // 10 degree C conductor temperature rise. Width and thickness must be in mils.
+        constexpr double temperatureRiseC = 10.0;
+        const bool       internalLayer = GetLayer() != F_Cu && GetLayer() != B_Cu;
+        const double     coefficient = internalLayer ? 0.024 : 0.048;
+        const double     widthMils = pcbIUScale.IUTomm( m_width ) / 0.0254;
+        const double     thicknessMils = pcbIUScale.IUTomm( copperThickness ) / 0.0254;
+        const double     crossSectionMils2 = widthMils * thicknessMils;
+
+        if( crossSectionMils2 > 0.0 )
+        {
+            const double current = coefficient * std::pow( temperatureRiseC, 0.44 )
+                                   * std::pow( crossSectionMils2, 0.725 );
+            const int precision = current < 0.1 ? 3 : 2;
+
+            aList.emplace_back( _( "Current (10°C rise)" ),
+                                wxString::Format( wxT( "~%.*f A (IPC-2221)" ),
+                                                  precision, current ) );
+        }
+    }
+
     if( Type() == PCB_ARC_T )
     {
         double radius = static_cast<PCB_ARC*>( this )->GetRadius();
@@ -3387,4 +3427,3 @@ ENUM_TO_WXANY( COVERING_MODE );
 ENUM_TO_WXANY( PLUGGING_MODE );
 ENUM_TO_WXANY( CAPPING_MODE );
 ENUM_TO_WXANY( FILLING_MODE );
-
