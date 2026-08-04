@@ -70,6 +70,8 @@ BOARD_DESIGN_SETTINGS::BOARD_DESIGN_SETTINGS( JSON_SETTINGS* aParent, const std:
     // if true, when creating a new track starting on an existing track, use this track width
     m_UseConnectedTrackWidth = false;
     m_TempOverrideTrackWidth = false;
+    m_useActiveLayerImpedanceTrackWidth = false;
+    m_activeLayerImpedanceTrackWidth = 0;
 
     // First is always the reference designator
     m_DefaultFPTextItems.emplace_back( wxT( "REF**" ), true, F_SilkS );
@@ -1103,6 +1105,8 @@ void BOARD_DESIGN_SETTINGS::initFromOther( const BOARD_DESIGN_SETTINGS& aOther )
     m_CurrentViaType              = aOther.m_CurrentViaType;
     m_UseConnectedTrackWidth      = aOther.m_UseConnectedTrackWidth;
     m_TempOverrideTrackWidth      = aOther.m_TempOverrideTrackWidth;
+    m_useActiveLayerImpedanceTrackWidth = aOther.m_useActiveLayerImpedanceTrackWidth;
+    m_activeLayerImpedanceTrackWidth = aOther.m_activeLayerImpedanceTrackWidth;
     m_MinClearance                = aOther.m_MinClearance;
     m_MinGrooveWidth              = aOther.m_MinGrooveWidth;
     m_MinConn                     = aOther.m_MinConn;
@@ -1204,6 +1208,10 @@ bool BOARD_DESIGN_SETTINGS::operator==( const BOARD_DESIGN_SETTINGS& aOther ) co
     if( m_CurrentViaType         != aOther.m_CurrentViaType ) return false;
     if( m_UseConnectedTrackWidth != aOther.m_UseConnectedTrackWidth ) return false;
     if( m_TempOverrideTrackWidth != aOther.m_TempOverrideTrackWidth ) return false;
+    if( m_useActiveLayerImpedanceTrackWidth
+        != aOther.m_useActiveLayerImpedanceTrackWidth ) return false;
+    if( m_activeLayerImpedanceTrackWidth
+        != aOther.m_activeLayerImpedanceTrackWidth ) return false;
     if( m_MinClearance           != aOther.m_MinClearance ) return false;
     if( m_MinGrooveWidth         != aOther.m_MinGrooveWidth ) return false;
     if( m_MinConn                != aOther.m_MinConn ) return false;
@@ -1521,12 +1529,15 @@ void BOARD_DESIGN_SETTINGS::SetTrackWidthIndex( int aIndex )
 {
     m_trackWidthIndex = std::min( aIndex, (int) m_TrackWidthList.size() - 1 );
     m_useCustomTrackVia = false;
+    m_useActiveLayerImpedanceTrackWidth = false;
 }
 
 
 int BOARD_DESIGN_SETTINGS::GetCurrentTrackWidth() const
 {
-    if( m_useCustomTrackVia )
+    if( m_useActiveLayerImpedanceTrackWidth && m_activeLayerImpedanceTrackWidth > 0 )
+        return m_activeLayerImpedanceTrackWidth;
+    else if( m_useCustomTrackVia )
         return m_customTrackWidth;
     else if( m_trackWidthIndex <= 0 || m_trackWidthIndex >= (int) m_TrackWidthList.size() )
         return m_NetSettings->GetDefaultNetclass()->GetTrackWidth();

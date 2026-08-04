@@ -249,8 +249,9 @@ FOOTPRINT::FOOTPRINT( const FOOTPRINT& aFootprint ) :
         }
     }
 
-    for( auto& [ name, file ] : aFootprint.EmbeddedFileMap() )
-        AddFile( new EMBEDDED_FILES::EMBEDDED_FILE( *file ) );
+    // Embedded files are inherited via the EMBEDDED_FILES copy constructor invoked in the
+    // member initializer list above; the underlying file payloads are reference-counted so
+    // cloning a footprint is cheap even when it carries large embedded models or fonts.
 }
 
 
@@ -1709,8 +1710,8 @@ std::vector<SEARCH_TERM>& FOOTPRINT::GetSearchTerms()
     m_searchTerms.reserve( 6 );
 
     m_searchTerms.emplace_back( SEARCH_TERM( GetLibNickname(), 4 ) );
-    m_searchTerms.emplace_back( SEARCH_TERM( GetName(), 8 ) );
-    m_searchTerms.emplace_back( SEARCH_TERM( GetLIB_ID().Format(), 16 ) );
+    m_searchTerms.emplace_back( SEARCH_TERM( GetName(), 8, true ) );
+    m_searchTerms.emplace_back( SEARCH_TERM( GetLIB_ID().Format(), 16, true ) );
 
     wxStringTokenizer keywordTokenizer( GetKeywords(), wxS( " \t\r\n" ), wxTOKEN_STRTOK );
 
@@ -2947,7 +2948,7 @@ void FOOTPRINT::Flip( const VECTOR2I& aCentre, FLIP_DIRECTION aFlipDirection )
     SetPosition( finalPos );
 
     // Flip layer
-    BOARD_ITEM::SetLayer( GetBoard()->FlipLayer( GetLayer() ) );
+    BOARD_ITEM::SetLayer( GetBoard() ? GetBoard()->FlipLayer( GetLayer() ) : FlipLayer( GetLayer() ) );
 
     // Calculate the new orientation, and then clear it for pad flipping.
     EDA_ANGLE newOrientation = -m_orient;

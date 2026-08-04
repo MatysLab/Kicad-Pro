@@ -726,8 +726,10 @@ int SCH_SELECTION_TOOL::Main( const TOOL_EVENT& aEvent )
             {
                 m_toolMgr->RunAction( SCH_ACTIONS::move );
             }
-            // Allow drag selecting table cells, except when they're inside a group that we haven't entered
+            // Allow drag selecting table cells, except when the table is already selected
+            // or inside a group that we haven't entered
             else if( CollectHits( collector, evt->DragOrigin(), { SCH_TABLECELL_T } )
+                     && !collector[0]->GetParent()->IsSelected()
                      && ( collector[0]->GetParent()->GetParentGroup() == nullptr
                           || collector[0]->GetParent()->GetParentGroup() == m_enteredGroup ) )
             {
@@ -1242,6 +1244,12 @@ void SCH_SELECTION_TOOL::EnterGroup()
             RECURSE_MODE::NO_RECURSE );
 
     m_toolMgr->ProcessEvent( EVENTS::SelectedEvent );
+
+    // Processing the selection event can re-enter the tool and ExitGroup(), which clears
+    // m_enteredGroup. If that happened, don't operate on the now-stale (possibly null) group
+    // or we would hide/overlay a null item and crash (issue #24778).
+    if( m_enteredGroup != aGroup )
+        return;
 
     getView()->Hide( m_enteredGroup, true );
     m_enteredGroupOverlay.Add( m_enteredGroup );

@@ -103,6 +103,9 @@ public:
      */
     int PlaceStackup( const TOOL_EVENT& aEvent );
 
+    /** Place a regular array of ground or signal vias inside selected copper areas. */
+    int PlaceViaStitching( const TOOL_EVENT& aEvent );
+
     /**
      */
     int PlaceTuningPattern( const TOOL_EVENT& aEvent );

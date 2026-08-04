@@ -72,9 +72,54 @@ public:
     {
         switch( index )
         {
-            // This fixes "Control Light"
+        case wxSYS_COLOUR_ACTIVECAPTION:
+        case wxSYS_COLOUR_MENUBAR:
+            return wxColour( 0x12, 0x12, 0x12 );
+
+        case wxSYS_COLOUR_BTNFACE:
+            return wxColour( 0x15, 0x15, 0x15 );
+
+        case wxSYS_COLOUR_WINDOW:
+        case wxSYS_COLOUR_LISTBOX:
+        case wxSYS_COLOUR_APPWORKSPACE:
+            return wxColour( 0x14, 0x14, 0x14 );
+
+        case wxSYS_COLOUR_MENU:
         case wxSYS_COLOUR_3DLIGHT:
-            return wxColour( 0x2B2B2B );
+            return wxColour( 0x1B, 0x1B, 0x1B );
+
+        case wxSYS_COLOUR_BTNSHADOW:
+            return wxColour( 0x33, 0x33, 0x33 );
+
+        case wxSYS_COLOUR_BTNHIGHLIGHT:
+            return wxColour( 0x29, 0x29, 0x29 );
+
+        case wxSYS_COLOUR_WINDOWFRAME:
+        case wxSYS_COLOUR_ACTIVEBORDER:
+        case wxSYS_COLOUR_INACTIVEBORDER:
+        case wxSYS_COLOUR_SCROLLBAR:
+        case wxSYS_COLOUR_3DDKSHADOW:
+            return wxColour( 0x38, 0x38, 0x38 );
+
+        case wxSYS_COLOUR_CAPTIONTEXT:
+        case wxSYS_COLOUR_MENUTEXT:
+        case wxSYS_COLOUR_WINDOWTEXT:
+        case wxSYS_COLOUR_BTNTEXT:
+        case wxSYS_COLOUR_HIGHLIGHTTEXT:
+            return wxColour( 0xE6, 0xE6, 0xE6 );
+
+        case wxSYS_COLOUR_INACTIVECAPTIONTEXT:
+            return wxColour( 0xA8, 0xA8, 0xA8 );
+
+        case wxSYS_COLOUR_GRAYTEXT:
+            return wxColour( 0x66, 0x66, 0x66 );
+
+        case wxSYS_COLOUR_HIGHLIGHT:
+            return wxColour( 0x17, 0x69, 0xC2 );
+
+        case wxSYS_COLOUR_HOTLIGHT:
+        case wxSYS_COLOUR_MENUHILIGHT:
+            return wxColour( 0x24, 0x84, 0xE4 );
 
         default: return wxDarkModeSettings::GetColour( index );
         }

@@ -41,11 +41,13 @@ class PANEL_SETUP_BOARD_STACKUP_BASE : public wxPanel
 	private:
 
 	protected:
+		wxBoxSizer* bTopSizer;
 		wxStaticText* m_lblCopperLayers;
 		wxChoice* m_choiceCopperLayers;
 		wxCheckBox* m_impedanceControlled;
 		wxButton* m_buttonAddDielectricLayer;
 		wxButton* m_buttonRemoveDielectricLayer;
+		wxBoxSizer* m_sizerStackup;
 		WX_PANEL* m_panel1;
 		wxScrolledWindow* m_scGridWin;
 		wxFlexGridSizer* m_fgGridSizer;
@@ -79,4 +81,3 @@ class PANEL_SETUP_BOARD_STACKUP_BASE : public wxPanel
 		~PANEL_SETUP_BOARD_STACKUP_BASE();
 
 };
-

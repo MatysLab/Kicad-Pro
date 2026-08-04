@@ -69,14 +69,6 @@ PANEL_COMMON_SETTINGS::PANEL_COMMON_SETTINGS( wxWindow* aParent ) :
     m_rbIconThemeAuto->Show( false );
 #endif
 
-    // It's common on Windows to have separate app and system settings for light/dark
-#ifndef __WXMSW__
-    m_stAppTheme->Show( false );
-    m_rbAppThemeLight->Show( false );
-    m_rbAppThemeDark->Show( false );
-    m_rbAppThemeAuto->Show( false );
-#endif
-
    	/*
    	 * Automatic canvas scaling works fine on all supported platforms, so manual scaling is disabled
    	 */

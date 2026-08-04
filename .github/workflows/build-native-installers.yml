@@ -1,0 +1,167 @@
+name: Build native installers
+
+on:
+  push:
+    branches:
+      - codex/controlled-impedance-stackups
+    paths:
+      - .github/workflows/build-native-installers.yml
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing GitHub release tag to receive the installers
+        required: true
+        default: v10.0.4-kicad-pro.3
+      source_ref:
+        description: KiCad Pro branch or tag to build
+        required: true
+        default: codex/controlled-impedance-stackups
+      package_version:
+        description: Numeric Windows package version
+        required: true
+        default: 10.0.4.11
+
+permissions:
+  contents: write
+
+env:
+  RELEASE_TAG: ${{ inputs.release_tag || 'v10.0.4-kicad-pro.3' }}
+  SOURCE_REF: ${{ inputs.source_ref || 'codex/controlled-impedance-stackups' }}
+  PACKAGE_VERSION: ${{ inputs.package_version || '10.0.4.11' }}
+
+jobs:
+  windows-x64:
+    name: Windows x64 NSIS installer
+    if: github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[linux-only]')
+    runs-on: windows-2022
+    timeout-minutes: 360
+    steps:
+      - name: Clone official KiCad Windows packager
+        shell: powershell
+        run: git clone --depth 1 https://gitlab.com/kicad/packaging/kicad-win-builder.git win-builder
+
+      - name: Configure custom KiCad Pro source
+        shell: powershell
+        run: |
+          $config = @{
+            'name:' = 'KiCad Pro'
+            output_prefix = 'kicad-pro-'
+            package_version = $env:PACKAGE_VERSION
+            train = 'stable'
+            build_mode = 'Release'
+            nsis = @{ file = 'install-8-9-10.nsi' }
+            sources = @{
+              kicad = @{
+                repo = 'https://github.com/MatysLab/Kicad-Pro.git'
+                ref = "branch/$env:SOURCE_REF"
+              }
+            }
+            vcpkg = @{ manifest_mode = $true }
+          }
+          $config | ConvertTo-Json -Depth 8 | Set-Content win-builder/build-configs/kicad-pro.json
+
+      - name: Initialize packager and dependencies
+        shell: powershell
+        working-directory: win-builder
+        run: |
+          ./build.ps1 -Init
+          ./build.ps1 -Vcpkg -Arch x64 -BuildConfigName kicad-pro
+          # Build-Vcpkg records its path and switches the packager to its
+          # bundled CMake/Ninja toolchain, so initialize once more afterward.
+          ./build.ps1 -Init
+
+      - name: Build KiCad Pro
+        shell: powershell
+        working-directory: win-builder
+        run: |
+          # Lite installers fetch libraries after installation, so avoid cloning
+          # several gigabytes of library sources that are not put in the EXE.
+          @('kicad-symbols', 'kicad-footprints', 'kicad-packages3D', 'kicad-templates') |
+            ForEach-Object { New-Item -ItemType Directory -Force ".build/$_" | Out-Null }
+          ./build.ps1 -Build -Arch x64 -BuildConfigName kicad-pro
+
+      - name: Create NSIS installer
+        shell: powershell
+        working-directory: win-builder
+        run: ./build.ps1 -Package -Arch x64 -BuildConfigName kicad-pro -Lite
+
+      - name: Checksum and publish Windows installer
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $installer = Get-ChildItem win-builder/.out -Filter 'kicad-pro-*.exe' | Select-Object -First 1
+          if (-not $installer) { throw 'NSIS installer was not produced' }
+          $hash = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $($installer.Name)" | Set-Content "$($installer.FullName).sha256"
+          gh release upload $env:RELEASE_TAG $installer.FullName "$($installer.FullName).sha256" --clobber --repo MatysLab/Kicad-Pro
+
+      - name: Preserve Windows artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kicad-pro-windows-x64
+          path: |
+            win-builder/.out/kicad-pro-*.exe
+            win-builder/.out/kicad-pro-*.exe.sha256
+          if-no-files-found: warn
+
+  linux-x86_64:
+    name: Linux x86_64 AppImage
+    if: github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[windows-only]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - name: Check out KiCad Pro
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_REF }}
+          fetch-depth: 100
+          fetch-tags: true
+
+      - name: Clone official KiCad AppImage packager
+        run: git clone --depth 1 https://gitlab.com/kicad/packaging/kicad-appimage.git appimage-builder
+
+      - name: Build light AppImage
+        env:
+          SOURCE_DIR: ${{ github.workspace }}
+        working-directory: appimage-builder
+        run: |
+          docker buildx create --name kicad-pro-builder --driver docker-container --use
+          docker buildx inspect --bootstrap
+          docker buildx build \
+            --progress=plain \
+            --build-context kicad-src="$SOURCE_DIR" \
+            --build-arg BUILDKIT_CONTEXT_KEEP_GIT_DIR=1 \
+            --build-arg REGISTRY=registry.gitlab.com/kicad/packaging/kicad-appimage \
+            --build-arg KICAD_BUILD_RELEASE=10.0.5-rc1-preview.4 \
+            --build-arg KICAD_BUILD_MAJVERSION=10 \
+            --build-arg KICAD_BUILD_TYPE=Release \
+            --build-arg APPIMAGE_PREFIX=kicad-pro \
+            --build-arg 'KICAD_PATCHES=0001-Add-AppImage-to-platform-string.patch 0002-Remove-dirty-suffix-from-version.patch' \
+            --platform linux/amd64 \
+            --target build-kicad-light \
+            --cache-from type=registry,ref=registry.gitlab.com/kicad/packaging/kicad-appimage/cache:buildcache \
+            --output type=local,dest=output \
+            -f Dockerfile .
+
+      - name: Checksum and publish Linux AppImage
+        env:
+          GH_TOKEN: ${{ github.token }}
+        working-directory: appimage-builder
+        run: |
+          appimage="$(find output -maxdepth 1 -name 'kicad-pro-*.AppImage' -print -quit)"
+          test -n "$appimage"
+          chmod +x "$appimage"
+          sha256sum "$appimage" > "$appimage.sha256"
+          gh release upload "$RELEASE_TAG" "$appimage" "$appimage.sha256" --clobber --repo MatysLab/Kicad-Pro
+
+      - name: Preserve Linux artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kicad-pro-linux-x86_64
+          path: |
+            appimage-builder/output/*.AppImage
+            appimage-builder/output/*.AppImage.sha256
+          if-no-files-found: warn

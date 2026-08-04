@@ -642,7 +642,8 @@ bool SCH_FIELD::Matches( const EDA_SEARCH_DATA& aSearchData, void* aAuxData ) co
         if( !parentSymbol )
             return false;
 
-        if( parentSymbol->Matches( aSearchData, aAuxData ) )
+        // the search pane surfaces metadata hits through the reference field
+        if( aSearchData.searchMetadata && parentSymbol->Matches( aSearchData, aAuxData ) )
             return true;
 
         wxASSERT( aAuxData );
@@ -1509,6 +1510,33 @@ bool SCH_FIELD::operator==( const SCH_FIELD& aOther ) const
     }
 
     if( GetPosition() != aOther.GetPosition() )
+        return false;
+
+    if( IsGeneratedField() != aOther.IsGeneratedField() )
+        return false;
+
+    if( IsNameShown() != aOther.IsNameShown() )
+        return false;
+
+    if( CanAutoplace() != aOther.CanAutoplace() )
+        return false;
+
+    return EDA_TEXT::operator==( aOther );
+}
+
+
+bool SCH_FIELD::HasSameContent( const SCH_FIELD& aOther ) const
+{
+    if( GetCanonicalName() != aOther.GetCanonicalName() )
+        return false;
+
+    if( GetPosition() != aOther.GetPosition() )
+        return false;
+
+    if( IsVisible() != aOther.IsVisible() )
+        return false;
+
+    if( IsPrivate() != aOther.IsPrivate() )
         return false;
 
     if( IsGeneratedField() != aOther.IsGeneratedField() )

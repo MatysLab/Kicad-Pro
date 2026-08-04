@@ -41,8 +41,10 @@ set( QA_COMMON_SRCS
     test_color4d.cpp
     test_commit.cpp
     test_coroutine.cpp
+    test_design_block_io.cpp
     test_eda_shape.cpp
     test_eda_text.cpp
+    test_wx_dataviewctrl.cpp
     test_embedded_file_compress.cpp
     test_expand_text_vars.cpp
     test_file_history.cpp
@@ -63,6 +65,7 @@ set( QA_COMMON_SRCS
     test_kiid.cpp
     test_layer_ids.cpp
     test_lib_id.cpp
+    test_lib_tree_model_adapter.cpp
     test_layer_range.cpp
     test_lset.cpp
     test_markup_parser.cpp
@@ -70,11 +73,15 @@ set( QA_COMMON_SRCS
     test_property.cpp
     test_property_holder.cpp
     test_reporting.cpp
+    test_rc_tree_model.cpp
     test_refdes_utils.cpp
+    test_reset_print_to_file.cpp
     test_grid_helper.cpp
     test_string_utils.cpp
     test_richio.cpp
+    test_template_fieldnames.cpp
     test_text_attributes.cpp
+    test_tool_dispatcher.cpp
     git/test_libgit_backend.cpp
     text_eval/test_text_eval_parser.cpp
     text_eval/test_text_eval_parser_core.cpp
@@ -106,11 +113,16 @@ set( QA_COMMON_SRCS
     test_kigit_orphan_registry.cpp
     test_throttle.cpp
     view/test_zoom_controller.cpp
+    view/test_view_null_safety.cpp
+    view/test_view_rtree_stale_bbox.cpp
 
     test_netname_validator.cpp
 
     # GAL tests
     test_gal_xor_mode.cpp
+
+    # Preview item / drawing utility tests
+    test_dashed_line.cpp
 
     # Graphics import tests
     test_graphics_importer_buffer.cpp
@@ -121,6 +133,7 @@ set( QA_COMMON_SRCS
 
     # Project file tests
     test_project_file.cpp
+    test_project_local_settings.cpp
     test_remote_provider_metadata.cpp
     test_remote_provider_client.cpp
     test_remote_provider_settings.cpp
@@ -130,10 +143,14 @@ set( QA_COMMON_SRCS
 
     # Job tests
     test_job_export_pcb_variants.cpp
+    test_job_export_sch_bom.cpp
     test_job_export_sch_plot.cpp
     test_job_sch_erc.cpp
     test_jobs_runner.cpp
     test_jobs_output_archive.cpp
+
+    # Navlib safe initialization tests
+    test_navlib_safe_init.cpp
 )
 
 if( KICAD_TEST_DATABASE_LIBRARIES )
@@ -174,11 +191,20 @@ if( TARGET api_schema_build_copy )
     add_dependencies( qa_common api_schema_build_copy )
 endif()
 
+# The print-to-file reset test reaches into the native GtkPrintSettings on GTK builds.
+# The GTK3 libraries themselves propagate transitively through kiplatform.
+if( KICAD_WX_PORT STREQUAL "gtk" )
+    find_package( PkgConfig REQUIRED )
+    pkg_check_modules( GTK3 REQUIRED gtk+-3.0 )
+    target_include_directories( qa_common SYSTEM PRIVATE ${GTK3_INCLUDE_DIRS} )
+endif()
+
 include_directories(
     ${CMAKE_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/kicad
     ${CMAKE_SOURCE_DIR}/pcbnew
     ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/common
     ${CMAKE_SOURCE_DIR}/common/io/pads
     ${CMAKE_SOURCE_DIR}/qa/mocks/include
     ${INC_AFTER}

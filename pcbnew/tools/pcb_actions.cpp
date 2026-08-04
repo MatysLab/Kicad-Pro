@@ -338,6 +338,14 @@ TOOL_ACTION PCB_ACTIONS::drawVia( TOOL_ACTION_ARGS()
         .Icon( BITMAPS::add_via )
         .Flags( AF_ACTIVATE ) );
 
+TOOL_ACTION PCB_ACTIONS::viaStitching( TOOL_ACTION_ARGS()
+        .Name( "pcbnew.InteractiveDrawing.viaStitching" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Via Stitching" ) )
+        .Tooltip( _( "Place a regular array of stitching vias in copper zones or polygons" ) )
+        .Icon( BITMAPS::add_via )
+        .Flags( AF_ACTIVATE ) );
+
 TOOL_ACTION PCB_ACTIONS::drawRuleArea( TOOL_ACTION_ARGS()
         .Name( "pcbnew.InteractiveDrawing.ruleArea" )
         .Scope( AS_GLOBAL )
@@ -565,6 +573,18 @@ TOOL_ACTION PCB_ACTIONS::editLibFpInFpEditor( TOOL_ACTION_ARGS()
         .DefaultHotkey( MD_CTRL + MD_SHIFT + 'E' )
         .FriendlyName( _( "Edit Library Footprint..." ) )
         .Icon( BITMAPS::module_editor ) );
+
+TOOL_ACTION PCB_ACTIONS::toggleExcludeFromBOM( TOOL_ACTION_ARGS()
+        .Name( "pcbnew.InteractiveEdit.toggleExcludeFromBOM" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Exclude from Bill of Materials" ) )
+        .Tooltip( _( "Toggle the exclude from bill of materials attribute" ) ) );
+
+TOOL_ACTION PCB_ACTIONS::toggleExcludeFromPosFiles( TOOL_ACTION_ARGS()
+        .Name( "pcbnew.InteractiveEdit.toggleExcludeFromPosFiles" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Exclude from Position Files" ) )
+        .Tooltip( _( "Toggle the exclude from position files attribute" ) ) );
 
 TOOL_ACTION PCB_ACTIONS::getAndPlace( TOOL_ACTION_ARGS()
         .Name( "pcbnew.InteractiveEdit.FindMove" )

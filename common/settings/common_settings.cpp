@@ -64,9 +64,6 @@ COMMON_SETTINGS::COMMON_SETTINGS() :
         m_Api(),
         m_csInternals( std::make_unique<COMMON_SETTINGS_INTERNALS>() )
 {
-    /*
-     * Automatic dark mode detection works fine on Mac.
-     */
 #if defined( __WXGTK__ ) || defined( __WXMSW__ )
     m_params.emplace_back( new PARAM_ENUM<ICON_THEME>( "appearance.icon_theme",
             &m_Appearance.icon_theme, ICON_THEME::AUTO, ICON_THEME::LIGHT, ICON_THEME::AUTO ) );
@@ -74,12 +71,8 @@ COMMON_SETTINGS::COMMON_SETTINGS() :
     m_Appearance.icon_theme = ICON_THEME::AUTO;
 #endif
 
-#if defined( __WXMSW__ )
     m_params.emplace_back( new PARAM_ENUM<APP_THEME>( "appearance.app_theme", &m_Appearance.app_theme,
-                                                       APP_THEME::AUTO, APP_THEME::LIGHT, APP_THEME::AUTO ) );
-#else
-    m_Appearance.app_theme = APP_THEME::AUTO;
-#endif
+                                                       APP_THEME::DARK, APP_THEME::LIGHT, APP_THEME::AUTO ) );
 
     /*
    	 * Automatic canvas scaling works fine on all supported platforms, so it's no longer exposed as
@@ -329,8 +322,6 @@ COMMON_SETTINGS::COMMON_SETTINGS() :
     m_params.emplace_back( new PARAM<int>( "graphics.antialiasing_mode",
             &m_Graphics.aa_mode, 2, 0, 2 ) );
 
-    m_params.emplace_back( new PARAM<bool>( "system.local_history_enabled",
-            &m_System.local_history_enabled, true ) );
     m_params.emplace_back( new PARAM<int>( "system.local_history_debounce",
             &m_System.local_history_debounce, 5, 0, 100000 ) );
 
@@ -385,6 +376,15 @@ COMMON_SETTINGS::COMMON_SETTINGS() :
 
     m_params.emplace_back( new PARAM<bool>( "do_not_show_again.migrate_wrl_prompt",
             &m_DoNotShowAgain.migrate_wrl_prompt, false ) );
+
+    m_params.emplace_back( new PARAM<bool>( "embed_file_defaults.datasheet", &m_EmbedFileDefaults.datasheet, true ) );
+
+    m_params.emplace_back(
+            new PARAM<bool>( "embed_file_defaults.drawing_sheet", &m_EmbedFileDefaults.drawing_sheet, true ) );
+
+    m_params.emplace_back( new PARAM<bool>( "embed_file_defaults.model_3d", &m_EmbedFileDefaults.model_3d, false ) );
+
+    m_params.emplace_back( new PARAM<bool>( "embed_file_defaults.sim_model", &m_EmbedFileDefaults.sim_model, false ) );
 
     m_params.emplace_back( new PARAM_LIST<wxString>( "system.extra_3d_search_dirs",
             &m_Extra3DSearchDirs, {} ) );

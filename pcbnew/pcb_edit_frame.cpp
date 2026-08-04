@@ -770,6 +770,10 @@ void PCB_EDIT_FRAME::OnCrossProbeFlashTimer( wxTimerEvent& aEvent )
 
 PCB_EDIT_FRAME::~PCB_EDIT_FRAME()
 {
+    // Always ensure that we are unregistered even in a close without graceful doCloseWindow()
+    if( GetBoard() )
+        Kiway().LocalHistory().UnregisterSaver( GetBoard() );
+
     ScriptingOnDestructPcbEditFrame( this );
 
     if( ADVANCED_CFG::GetCfg().m_ShowEventCounters )
@@ -1825,6 +1829,19 @@ void PCB_EDIT_FRAME::SetActiveLayer( PCB_LAYER_ID aLayer, bool aForceRedraw )
 
     PCB_BASE_FRAME::SetActiveLayer( aLayer );
 
+    if( GetDesignSettings().UseActiveLayerImpedanceTrackWidth() )
+    {
+        if( std::optional<ACTIVE_LAYER_IMPEDANCE_WIDTH> width =
+                    GetActiveLayerImpedanceTrackWidth() )
+        {
+            GetDesignSettings().SetActiveLayerImpedanceTrackWidth( width->m_width );
+        }
+        else
+            GetDesignSettings().UseActiveLayerImpedanceTrackWidth( false );
+    }
+
+    UpdateTrackWidthSelectBox( m_SelTrackWidthBox, true, true );
+
     m_appearancePanel->OnLayerChanged();
 
     m_toolManager->PostAction( PCB_ACTIONS::layerChanged );  // notify other tools
@@ -1859,50 +1876,70 @@ void PCB_EDIT_FRAME::SetActiveLayer( PCB_LAYER_ID aLayer, bool aForceRedraw )
     if( std::optional<int> newClearanceLayer = getClearanceLayerForActive( aLayer ) )
         GetCanvas()->GetView()->SetLayerVisible( *newClearanceLayer, true );
 
+    const HIGH_CONTRAST_MODE contrastMode = GetDisplayOptions().m_ContrastModeDisplay;
+
     GetCanvas()->GetView()->UpdateAllItemsConditionally(
             [&]( KIGFX::VIEW_ITEM* aItem ) -> int
             {
                 if( !aItem->IsBOARD_ITEM() )
                     return 0;
 
-                BOARD_ITEM* item = static_cast<BOARD_ITEM*>( aItem );
-
-                // Note: KIGFX::REPAINT isn't enough for things that go from invisible to visible
-                // as they won't be found in the view layer's itemset for re-painting.
-                if( GetDisplayOptions().m_ContrastModeDisplay == HIGH_CONTRAST_MODE::HIDDEN )
-                {
-                    if( item->IsOnLayer( oldLayer ) || item->IsOnLayer( aLayer ) )
-                        return KIGFX::ALL;
-                }
-
-                if( item->Type() == PCB_VIA_T )
-                {
-                    PCB_VIA* via = static_cast<PCB_VIA*>( item );
-
-                    // Vias on a restricted layer set must be redrawn when the active layer
-                    // is changed
-                    if( via->GetViaType() == VIATYPE::BLIND
-                            || via->GetViaType() == VIATYPE::BURIED
-                            || via->GetViaType() == VIATYPE::MICROVIA )
-                    {
-                        return KIGFX::REPAINT;
-                    }
-
-                    if( via->GetRemoveUnconnected() )
-                        return KIGFX::ALL;
-                }
-                else if( item->Type() == PCB_PAD_T )
-                {
-                    PAD* pad = static_cast<PAD*>( item );
-
-                    if( pad->GetRemoveUnconnected() )
-                        return KIGFX::ALL;
-                }
-
-                return 0;
+                return activeLayerUpdateFlags( static_cast<const BOARD_ITEM*>( aItem ), oldLayer,
+                                               aLayer, contrastMode );
             } );
 
     GetCanvas()->Refresh();
+}
+
+
+int PCB_EDIT_FRAME::activeLayerUpdateFlags( const BOARD_ITEM* aItem, PCB_LAYER_ID aOldLayer,
+                                            PCB_LAYER_ID aNewLayer, HIGH_CONTRAST_MODE aContrastMode )
+{
+    // Note: KIGFX::REPAINT isn't enough for things that go from invisible to visible as they
+    // won't be found in the view layer's itemset for re-painting.
+    if( aContrastMode == HIGH_CONTRAST_MODE::HIDDEN )
+    {
+        if( aItem->IsOnLayer( aOldLayer ) || aItem->IsOnLayer( aNewLayer ) )
+            return KIGFX::ALL;
+    }
+
+    // High contrast dims by active layer so all flagged items repaint; without it only the flashed
+    // copper geometry depends on the active layer, so re-cache just the items whose flashing changes.
+    const bool highContrast = aContrastMode != HIGH_CONTRAST_MODE::NORMAL;
+
+    if( aItem->Type() == PCB_VIA_T )
+    {
+        const PCB_VIA* via = static_cast<const PCB_VIA*>( aItem );
+
+        if( via->GetViaType() == VIATYPE::BLIND
+                || via->GetViaType() == VIATYPE::BURIED
+                || via->GetViaType() == VIATYPE::MICROVIA )
+        {
+            if( highContrast
+                    || via->GetLayerSet().test( aOldLayer ) != via->GetLayerSet().test( aNewLayer ) )
+            {
+                return KIGFX::REPAINT;
+            }
+        }
+
+        if( via->GetRemoveUnconnected()
+                && ( highContrast || via->FlashLayer( aOldLayer ) != via->FlashLayer( aNewLayer ) ) )
+        {
+            return KIGFX::ALL;
+        }
+    }
+    else if( aItem->Type() == PCB_PAD_T )
+    {
+        const PAD* pad = static_cast<const PAD*>( aItem );
+
+        if( pad->GetRemoveUnconnected()
+                && ( highContrast || pad->FlashLayer( aOldLayer ) != pad->FlashLayer( aNewLayer ) ) )
+        {
+            return KIGFX::ALL;
+        }
+    }
+
+    return 0;
 }
 
 
@@ -2525,10 +2562,12 @@ static void processTextItem( const PCB_TEXT& aSrc, PCB_TEXT& aDest,
         *aUpdated |= aSrc.GetTextSize() != aDest.GetTextSize();
         *aUpdated |= aSrc.GetTextThickness() != aDest.GetTextThickness();
         *aUpdated |= aSrc.GetTextAngle() != aDest.GetTextAngle();
+        *aUpdated |= aSrc.IsKnockout() != aDest.IsKnockout();
     }
     else
     {
         aDest.SetAttributes( aSrc );
+        aDest.SetIsKnockout( aSrc.IsKnockout() );
     }
 
     if( aResetTextPositions )
@@ -3167,7 +3206,7 @@ void PCB_EDIT_FRAME::ProjectChanged()
                     // See SCHEMATIC::SaveToHistory: the dirty check is only valid in ZIP
                     // mode.  In INCREMENTAL mode the manual-save flow clears the dirty
                     // flag before the saver runs, so filtering would drop the snapshot.
-                    bool filterClean = Pgm().GetCommonSettings()->m_Backup.format == BACKUP_FORMAT::ZIP;
+                    bool filterClean = !Pgm().GetCommonSettings()->AutosaveUsesLocalHistory();
 
                     if( filterClean && !IsContentModified() )
                         return;
@@ -3178,38 +3217,62 @@ void PCB_EDIT_FRAME::ProjectChanged()
 }
 
 
-bool PCB_EDIT_FRAME::CanAcceptApiCommands()
+bool PCB_EDIT_FRAME::interactiveOperationInProgress() const
 {
-    TOOL_BASE* currentTool = GetToolManager()->GetCurrentTool();
+    TOOL_MANAGER* mgr = GetToolManager();
+
+    if( !mgr )
+        return false;
+
+    TOOL_BASE* currentTool = mgr->GetCurrentTool();
 
     // When a single item that can be point-edited is selected, the point editor
     // tool will be active instead of the selection tool.  It blocks undo/redo
     // while the user is actually dragging points around, though, so we can use
-    // this as an initial check to prevent API actions when points are being edited.
+    // this as an initial check.
     if( UndoRedoBlocked() )
-        return false;
+        return true;
 
-    // Don't allow any API use while the user is using a tool that could
-    // modify the model in the middle of the message stream
-    if( currentTool != GetToolManager()->GetTool<PCB_SELECTION_TOOL>() &&
-        currentTool != GetToolManager()->GetTool<PCB_POINT_EDITOR>() )
+    // A tool other than passive selection or point editing is actively modifying
+    // the model (drawing, dragging, routing, etc.).
+    if( currentTool != mgr->GetTool<PCB_SELECTION_TOOL>()
+        && currentTool != mgr->GetTool<PCB_POINT_EDITOR>() )
     {
-        return false;
+        return true;
     }
 
-    ZONE_FILLER_TOOL* zoneFillerTool = m_toolManager->GetTool<ZONE_FILLER_TOOL>();
+    if( ZONE_FILLER_TOOL* zoneFillerTool = mgr->GetTool<ZONE_FILLER_TOOL>();
+        zoneFillerTool && zoneFillerTool->IsBusy() )
+    {
+        return true;
+    }
 
-    if( zoneFillerTool->IsBusy() )
-        return false;
+    if( ROUTER_TOOL* routerTool = mgr->GetTool<ROUTER_TOOL>();
+        routerTool && routerTool->RoutingInProgress() )
+    {
+        return true;
+    }
 
-    ROUTER_TOOL* routerTool = m_toolManager->GetTool<ROUTER_TOOL>();
+    return false;
+}
 
-    if( routerTool && routerTool->RoutingInProgress() )
+
+bool PCB_EDIT_FRAME::CanAcceptApiCommands()
+{
+    if( interactiveOperationInProgress() )
         return false;
 
     return EDA_BASE_FRAME::CanAcceptApiCommands();
 }
 
+
+bool PCB_EDIT_FRAME::canRunAutoSave() const
+{
+    // Serializing a large board on the UI thread freezes the editor; never do it while the
+    // user is mid-operation or the deferred input gets misinterpreted (e.g. a routed track
+    // ending where the cursor lands once the editor unfreezes).
+    return !interactiveOperationInProgress();
+}
 
 
 wxString PCB_EDIT_FRAME::GetCurrentFileName() const

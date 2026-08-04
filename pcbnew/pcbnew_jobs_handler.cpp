@@ -418,7 +418,8 @@ TOOL_MANAGER* PCBNEW_JOBS_HANDLER::getToolManager( BOARD* aBrd )
 
 BOARD* PCBNEW_JOBS_HANDLER::getBoard( const wxString& aPath )
 {
-    BOARD* brd = nullptr;
+    BOARD*   brd = nullptr;
+    wxString loadError;
 
     if( !Pgm().IsGUI() && Pgm().GetSettingsManager().IsProjectOpen() )
     {
@@ -433,7 +434,7 @@ BOARD* PCBNEW_JOBS_HANDLER::getBoard( const wxString& aPath )
         }
 
         if( !m_cliBoard )
-            m_cliBoard = LoadBoard( pcbPath, true );
+            m_cliBoard = LoadBoard( pcbPath, true, &loadError );
 
         brd = m_cliBoard;
     }
@@ -446,11 +447,18 @@ BOARD* PCBNEW_JOBS_HANDLER::getBoard( const wxString& aPath )
     }
     else
     {
-        brd = LoadBoard( aPath, true );
+        brd = LoadBoard( aPath, true, &loadError );
     }
 
     if( !brd )
-        m_reporter->Report( _( "Failed to load board\n" ), RPT_SEVERITY_ERROR );
+    {
+        wxString msg = _( "Failed to load board" );
+
+        if( !loadError.IsEmpty() )
+            msg += wxString::Format( wxS( ": %s" ), loadError );
+
+        m_reporter->Report( msg + '\n', RPT_SEVERITY_ERROR );
+    }
 
     return brd;
 }
@@ -2642,6 +2650,16 @@ int PCBNEW_JOBS_HANDLER::JobExportOdb( JOB* aJob )
 
     if( !m_reporter )
         m_reporter = &reporter;
+
+    if( job->m_checkZonesBeforeExport )
+    {
+        TOOL_MANAGER* toolManager = getToolManager( brd );
+
+        if( !toolManager->FindTool( ZONE_FILLER_TOOL_NAME ) )
+            toolManager->RegisterTool( new ZONE_FILLER_TOOL );
+
+        toolManager->GetTool<ZONE_FILLER_TOOL>()->FillAllZones( nullptr, m_progressReporter, true );
+    }
 
     DIALOG_EXPORT_ODBPP::GenerateODBPPFiles( *job, brd, nullptr, m_progressReporter, m_reporter );
 

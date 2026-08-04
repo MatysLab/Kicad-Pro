@@ -287,6 +287,7 @@ void PCB_EDIT_FRAME::doReCreateMenuBar()
 
     placeMenu->Add( PCB_ACTIONS::placeFootprint );
     placeMenu->Add( PCB_ACTIONS::drawVia );
+    placeMenu->Add( PCB_ACTIONS::viaStitching );
     placeMenu->Add( PCB_ACTIONS::drawZone );
     placeMenu->Add( PCB_ACTIONS::drawRuleArea );
 

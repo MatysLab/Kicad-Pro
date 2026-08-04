@@ -24,6 +24,7 @@
 #include "pcb_base_edit_frame.h"
 #include "zones.h"
 #include <mail_type.h>
+#include <optional>
 #include <settings/app_settings.h>
 #include <variant>
 
@@ -166,6 +167,13 @@ public:
 
     void UpdateTrackWidthSelectBox( wxChoice* aTrackWidthSelectBox, bool aShowNetclass,
                                     bool aShowEdit );
+    struct ACTIVE_LAYER_IMPEDANCE_WIDTH
+    {
+        int    m_width;
+        double m_targetOhms;
+    };
+
+    std::optional<ACTIVE_LAYER_IMPEDANCE_WIDTH> GetActiveLayerImpedanceTrackWidth() const;
     void UpdateViaSizeSelectBox( wxChoice* aViaSizeSelectBox, bool aShowNetclass, bool aShowEdit );
 
     /**
@@ -297,6 +305,10 @@ public:
      *                     layer is the same as the previous one
      */
     void SetActiveLayer( PCB_LAYER_ID aLayer, bool aForceRedraw );
+
+    /// View update flags an item needs when the active layer changes. Static for testing.
+    static int activeLayerUpdateFlags( const BOARD_ITEM* aItem, PCB_LAYER_ID aOldLayer,
+                                       PCB_LAYER_ID aNewLayer, HIGH_CONTRAST_MODE aContrastMode );
 
     void OnDisplayOptionsChanged() override;
 
@@ -794,6 +806,15 @@ protected:
      */
     bool doAutoSave() override { return DoAutoSave(); }
 
+    bool canRunAutoSave() const override;
+
+    /**
+     * Return true when an interactive tool operation (routing, dragging, point editing,
+     * zone filling, or a blocked undo/redo) is currently in progress.  Used to gate both
+     * API command acceptance and autosave so neither stomps on a live edit.
+     */
+    bool interactiveOperationInProgress() const;
+
     /**
      * Load the given filename but sets the path to the current project path.
      *
@@ -856,6 +877,8 @@ public:
 private:
     friend struct PCB::IFACE;
     friend class APPEARANCE_CONTROLS;
+
+    int m_activeLayerImpedanceWidthChoice = -1;
 
     /**
      * The export board netlist tool action object.

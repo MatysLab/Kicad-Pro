@@ -23,6 +23,8 @@
 #include <wx/string.h>
 #include <wx/sysopt.h>
 
+#import <Cocoa/Cocoa.h>
+
 
 bool KIPLATFORM::APP::Init()
 {
@@ -34,6 +36,10 @@ bool KIPLATFORM::APP::Init()
 
 void KIPLATFORM::APP::EnableDarkMode( bool aForce )
 {
+    if( aForce )
+        [NSApp setAppearance:[NSAppearance appearanceNamed:NSAppearanceNameDarkAqua]];
+    else
+        [NSApp setAppearance:nil];
 }
 
 

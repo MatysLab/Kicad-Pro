@@ -162,6 +162,7 @@ set( PCBNEW_DIALOGS
     dialogs/dialog_track_via_properties.cpp
     dialogs/dialog_track_via_properties_base.cpp
     dialogs/dialog_track_via_size.cpp
+    dialogs/dialog_via_stitching.cpp
     dialogs/dialog_track_via_size_base.cpp
     dialogs/dialog_tuning_pattern_properties.cpp
     dialogs/dialog_tuning_pattern_properties_base.cpp
@@ -261,6 +262,7 @@ set( PCBNEW_EXPORTERS
     exporters/export_gencad_writer.cpp
     exporters/export_idf.cpp
     exporters/step/exporter_step.cpp
+    exporters/step/glb_utils.cpp
     exporters/step/kicad3d_info.cpp
     exporters/step/step_pcb_model.cpp
     exporters/step/KI_XCAFDoc_AssemblyGraph.cxx

@@ -2,7 +2,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: KiCad\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-06-19 18:05+0300\n"
+"POT-Creation-Date: 2026-07-13 16:46+0300\n"
 "PO-Revision-Date: 2018-07-15 17:07+0200\n"
 "Last-Translator: Simon Richter <Simon.Richter@hogyros.de>\n"
 "Language-Team: Simon Richter <Simon.Richter@hogyros.de>\n"
@@ -1337,10 +1337,6 @@ msgstr "&No"
 msgid "KiCad"
 msgstr "KiCad"
 
-#, c-format
-msgid "UNKNOWN (%d)"
-msgstr "UNKNOWN (%d)"
-
 msgid "KiCad Design Block folders"
 msgstr "KiCad Design Block folders"
 
@@ -1622,8 +1618,8 @@ msgstr ""
 "KiCad found auto-saved changes from a previous session. This usually means "
 "KiCad closed unexpectedly while you had unsaved work."
 
-msgid "Restore auto-saved"
-msgstr "Restore auto-saved"
+msgid "Restore Auto-saved"
+msgstr "Restore Auto-saved"
 
 msgid ""
 "Replaces your saved file with the auto-saved version. The previous saved "
@@ -1632,14 +1628,14 @@ msgstr ""
 "Replaces your saved file with the auto-saved version. The previous saved "
 "content is discarded."
 
-msgid "Keep current"
-msgstr "Keep current"
+msgid "Keep Current"
+msgstr "Keep Current"
 
 msgid "Keeps your saved file as-is and discards the auto-saved changes."
 msgstr "Keeps your saved file as-is and discards the auto-saved changes."
 
-msgid "Keep both"
-msgstr "Keep both"
+msgid "Keep Both"
+msgstr "Keep Both"
 
 msgid ""
 "Keeps your saved file and writes the auto-saved version alongside it as a "
@@ -1648,8 +1644,8 @@ msgstr ""
 "Keeps your saved file and writes the auto-saved version alongside it as a "
 "separate timestamped file you can review later."
 
-msgid "Cancel open"
-msgstr "Cancel open"
+msgid "Cancel Open"
+msgstr "Cancel Open"
 
 msgid ""
 "Closes this dialog without making any changes. The auto-saved files stay on "
@@ -2268,6 +2264,9 @@ msgstr "C&ommit"
 
 msgid "Commit message cannot be empty"
 msgstr "Commit message cannot be empty"
+
+msgid "Select at least one file to commit"
+msgstr "Select at least one file to commit"
 
 msgid "Key passphrase:"
 msgstr "Key passphrase:"
@@ -4075,12 +4074,12 @@ msgstr "Override locks"
 msgid "Edit Grids..."
 msgstr "Edit Grids..."
 
-msgid "Zoom Auto"
-msgstr "Zoom Auto"
-
 #, c-format
 msgid "Zoom %.2f"
 msgstr "Zoom %.2f"
+
+msgid "Zoom Auto"
+msgstr "Zoom Auto"
 
 #, c-format
 msgid "grid %s"
@@ -9671,8 +9670,8 @@ msgstr "The unit name '%s' is already in use."
 msgid "Delete extra units from symbol?"
 msgstr "Delete extra units from symbol?"
 
-msgid "Symbol must have at least 1 body style"
-msgstr "Symbol must have at least 1 body style"
+msgid "Custom body styles must have at least 2 entries"
+msgstr "Custom body styles must have at least 2 entries"
 
 msgid "Delete extra body styles from symbol?"
 msgstr "Delete extra body styles from symbol?"
@@ -17148,6 +17147,14 @@ msgstr "Add Symbol Library"
 
 #, c-format
 msgid ""
+"Could not overwrite the library file '%s'.\n"
+"Make sure you have write permissions and try again."
+msgstr ""
+"Could not overwrite the library file '%s'.\n"
+"Make sure you have write permissions and try again."
+
+#, c-format
+msgid ""
 "Could not create the library file '%s'.\n"
 "Make sure you have write permissions and try again."
 msgstr ""
@@ -18262,6 +18269,9 @@ msgstr "Set the exclude from simulation attribute"
 msgid "Set the exclude from board attribute"
 msgstr "Set the exclude from board attribute"
 
+msgid "Set the exclude from position files attribute"
+msgstr "Set the exclude from position files attribute"
+
 msgid "Set the do not populate attribute"
 msgstr "Set the do not populate attribute"
 
@@ -18857,6 +18867,9 @@ msgstr "Modify sheet pin"
 
 msgid "Modify schematic item"
 msgstr "Modify schematic item"
+
+msgid "Auto-place Sheet Pins"
+msgstr "Auto-place Sheet Pins"
 
 msgid "No sub schematic found in the current project"
 msgstr "No sub schematic found in the current project"
@@ -19529,6 +19542,9 @@ msgstr "Excl. BOM"
 
 msgid "Excl. Board"
 msgstr "Excl. Board"
+
+msgid "Excl. Pos Files"
+msgstr "Excl. Pos Files"
 
 msgid "Hierarchical"
 msgstr "Hierarchical"
@@ -21113,8 +21129,8 @@ msgstr "Render quality. Options: %s"
 msgid "Appearance preset. Options: %s, %s, or user-defined preset name"
 msgstr "Appearance preset. Options: %s, %s, or user-defined preset name"
 
-msgid "Colors defined in board stackup override those in preset"
-msgstr "Colors defined in board stackup override those in preset"
+msgid "Use colors defined in the board stackup instead of those in the preset"
+msgstr "Use colors defined in the board stackup instead of those in the preset"
 
 msgid ""
 "Enables floor, shadows and post-processing, even if disabled in quality "
@@ -21853,6 +21869,12 @@ msgstr "Project Files"
 msgid "Local History"
 msgstr "Local History"
 
+msgid "Local path: monitoring folder changes"
+msgstr "Local path: monitoring folder changes"
+
+msgid "Network path: not monitoring folder changes"
+msgstr "Network path: not monitoring folder changes"
+
 msgid "PCM Updates Available"
 msgstr "PCM Updates Available"
 
@@ -22557,12 +22579,6 @@ msgstr "Change filename: '%s'"
 
 msgid "Change filename"
 msgstr "Change filename"
-
-msgid "Network path: not monitoring folder changes"
-msgstr "Network path: not monitoring folder changes"
-
-msgid "Local path: monitoring folder changes"
-msgstr "Local path: monitoring folder changes"
 
 msgid "Please wait"
 msgstr "Please wait"
@@ -25831,6 +25847,10 @@ msgstr "(arc has null or very small size: %d nm)"
 
 msgid "Custom Rules"
 msgstr "Custom Rules"
+
+#, c-format
+msgid "Error copying footprint library '%s'."
+msgstr "Error copying footprint library '%s'."
 
 msgid "Barcode Error"
 msgstr "Barcode Error"
@@ -33124,6 +33144,9 @@ msgstr "<no net> will result in an isolated copper island."
 msgid "Zone name:"
 msgstr "Zone name:"
 
+msgid "A unique name for this zone, used to identify it in DRC rules"
+msgstr "A unique name for this zone, used to identify it in DRC rules"
+
 msgid "Copper clearance for this zone (set to 0 to use the netclass clearance)"
 msgstr ""
 "Copper clearance for this zone (set to 0 to use the netclass clearance)"
@@ -33549,8 +33572,8 @@ msgstr "Items shorting two nets"
 msgid "Items not allowed"
 msgstr "Items not allowed"
 
-msgid "Text (or dimension) on Edge.Cuts layer"
-msgstr "Text (or dimension) on Edge.Cuts layer"
+msgid "Text or graphic on Edge.Cuts layer"
+msgstr "Text or graphic on Edge.Cuts layer"
 
 msgid "Clearance violation"
 msgstr "Clearance violation"
@@ -35143,6 +35166,13 @@ msgstr "Cannot identify actual file type for '%s'."
 msgid "Could not transfer model data from file '%s'."
 msgstr "Could not transfer model data from file '%s'."
 
+msgid ""
+"Could not post-process GLB line primitives; the exported model may not "
+"import in strict glTF viewers."
+msgstr ""
+"Could not post-process GLB line primitives; the exported model may not "
+"import in strict glTF viewers."
+
 #, c-format
 msgid "No valid PCB assembly; cannot create output file '%s'.\n"
 msgstr "No valid PCB assembly; cannot create output file '%s'.\n"
@@ -36285,6 +36315,14 @@ msgid "Changed group library link from '%s' to '%s'."
 msgstr "Changed group library link from '%s' to '%s'."
 
 #, c-format
+msgid "Add group '%s' to group '%s'."
+msgstr "Add group '%s' to group '%s'."
+
+#, c-format
+msgid "Added group '%s' to group '%s'."
+msgstr "Added group '%s' to group '%s'."
+
+#, c-format
 msgid ""
 "Symbol %s has pins with no number.  These pins can not be matched to pads in "
 "%s."
@@ -37242,6 +37280,10 @@ msgstr "Loading tracks..."
 msgid "Loading unicode strings..."
 msgstr "Loading unicode strings..."
 
+#, c-format
+msgid "Imported %d length-tuning pattern(s)."
+msgstr "Imported %d length-tuning pattern(s)."
+
 msgid "Loading text..."
 msgstr "Loading text..."
 
@@ -38140,6 +38182,14 @@ msgid "Undefined Layers Warning"
 msgstr "Undefined Layers Warning"
 
 #, c-format
+msgid ""
+"One or more items were found on undefined layers (%s). Open the board in the "
+"PCB Editor to resolve."
+msgstr ""
+"One or more items were found on undefined layers (%s). Open the board in the "
+"PCB Editor to resolve."
+
+#, c-format
 msgid "Cannot create generated object of type '%s'"
 msgstr "Cannot create generated object of type '%s'"
 
@@ -38364,6 +38414,10 @@ msgid ""
 "Enter the python module which implements the PCB_IO::Footprint*() functions."
 msgstr ""
 "Enter the python module which implements the PCB_IO::Footprint*() functions."
+
+#, c-format
+msgid "UNKNOWN (%d)"
+msgstr "UNKNOWN (%d)"
 
 msgid "(not activated)"
 msgstr "(not activated)"
@@ -39291,8 +39345,8 @@ msgstr "Missing component class name argument to hasComponentClass()"
 msgid "Loading Footprint Libraries"
 msgstr "Loading Footprint Libraries"
 
-msgid "Failed to load board\n"
-msgstr "Failed to load board\n"
+msgid "Failed to load board"
+msgstr "Failed to load board"
 
 #, c-format
 msgid "Invalid layer name '%s'\n"
@@ -39425,6 +39479,9 @@ msgstr "No plugin found for file type '%s'\n"
 msgid "Importing '%s' using %s format...\n"
 msgstr "Importing '%s' using %s format...\n"
 
+msgid "Failed to load board\n"
+msgstr "Failed to load board\n"
+
 #, c-format
 msgid "Successfully saved imported board to '%s'\n"
 msgstr "Successfully saved imported board to '%s'\n"
@@ -39518,6 +39575,10 @@ msgstr ""
 "Unable to find complementary differential pair net for length tuning. Make "
 "sure the names of the nets belonging to a differential pair end with either "
 "_N/_P or +/-."
+
+#, c-format
+msgid "Unable to drag arc tracks of %.1f degrees or greater."
+msgstr "Unable to drag arc tracks of %.1f degrees or greater."
 
 msgid "board minimum clearance"
 msgstr "board minimum clearance"
@@ -40471,13 +40532,6 @@ msgstr "Swap Gate Nets..."
 msgid "Swap with %s"
 msgstr "Swap with %s"
 
-#, c-format
-msgid "Unable to resize arc tracks of %s or greater."
-msgstr "Unable to resize arc tracks of %s or greater."
-
-msgid "Drag Arc Track"
-msgstr "Drag Arc Track"
-
 msgid "Edit Track Width/Via Size"
 msgstr "Edit Track Width/Via Size"
 
@@ -40543,6 +40597,13 @@ msgid ""
 msgstr ""
 "Footprints cannot be mirrored. Use Flip to move them to the other side of "
 "the board."
+
+msgid ""
+"Groups containing footprints or other items that cannot be mirrored were "
+"skipped."
+msgstr ""
+"Groups containing footprints or other items that cannot be mirrored were "
+"skipped."
 
 msgid "Change Side / Flip"
 msgstr "Change Side / Flip"
@@ -40776,6 +40837,26 @@ msgstr "Repeat layout"
 #, c-format
 msgid "Copied to %d Rule Areas."
 msgstr "Copied to %d Rule Areas."
+
+msgid "Target Rule Area shares components with the reference area"
+msgstr "Target Rule Area shares components with the reference area"
+
+msgid ""
+"This target Rule Area selects the same components as the reference area. "
+"Repeat layout cannot copy a Rule Area onto itself. Give each placement Rule "
+"Area a distinct sheet, component class or group."
+msgstr ""
+"This target Rule Area selects the same components as the reference area. "
+"Repeat layout cannot copy a Rule Area onto itself. Give each placement Rule "
+"Area a distinct sheet, component class or group."
+
+#, c-format
+msgid ""
+"Shared components:\n"
+"%s"
+msgstr ""
+"Shared components:\n"
+"%s"
 
 #, c-format
 msgid "Reference area total components: %d"
@@ -41044,6 +41125,12 @@ msgstr "Set design block layout to current selection"
 
 msgid "Open in Footprint Editor"
 msgstr "Open in Footprint Editor"
+
+msgid "Toggle the exclude from bill of materials attribute"
+msgstr "Toggle the exclude from bill of materials attribute"
+
+msgid "Toggle the exclude from position files attribute"
+msgstr "Toggle the exclude from position files attribute"
 
 msgid ""
 "Selects a footprint by reference designator and places it under the cursor "
@@ -43522,8 +43609,8 @@ msgstr "Building zone fills..."
 msgid "Removing isolated copper islands..."
 msgstr "Removing isolated copper islands..."
 
-msgid "Refilling zones after island removal..."
-msgstr "Refilling zones after island removal..."
+msgid "Refilling overlapping zones..."
+msgstr "Refilling overlapping zones..."
 
 #, c-format
 msgid ""
@@ -43724,6 +43811,37 @@ msgstr "Process could not be created"
 #, c-format
 msgid "Could not create user scripting path %s."
 msgstr "Could not create user scripting path %s."
+
+#~ msgid "Restore auto-saved"
+#~ msgstr "Restore auto-saved"
+
+#~ msgid "Keep current"
+#~ msgstr "Keep current"
+
+#~ msgid "Keep both"
+#~ msgstr "Keep both"
+
+#~ msgid "Cancel open"
+#~ msgstr "Cancel open"
+
+#~ msgid "Refilling zones after island removal..."
+#~ msgstr "Refilling zones after island removal..."
+
+#~ msgid "Symbol must have at least 1 body style"
+#~ msgstr "Symbol must have at least 1 body style"
+
+#~ msgid "Colors defined in board stackup override those in preset"
+#~ msgstr "Colors defined in board stackup override those in preset"
+
+#~ msgid "Text (or dimension) on Edge.Cuts layer"
+#~ msgstr "Text (or dimension) on Edge.Cuts layer"
+
+#, c-format
+#~ msgid "Unable to resize arc tracks of %s or greater."
+#~ msgstr "Unable to resize arc tracks of %s or greater."
+
+#~ msgid "Drag Arc Track"
+#~ msgstr "Drag Arc Track"
 
 #~ msgid "design block layout could not be loaded"
 #~ msgstr "design block layout could not be loaded"
@@ -55100,9 +55218,6 @@ msgstr "Could not create user scripting path %s."
 
 #~ msgid "Toggle Exclude from Bill of Materials"
 #~ msgstr "Toggle Exclude from Bill of Materials"
-
-#~ msgid "Toggle the exclude from bill of materials attribute"
-#~ msgstr "Toggle the exclude from bill of materials attribute"
 
 #~ msgid "Include in Simulation"
 #~ msgstr "Include in Simulation"

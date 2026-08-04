@@ -75,6 +75,9 @@ PROJECT_FILE::PROJECT_FILE( const wxString& aFullPath ) :
     m_params.emplace_back( new PARAM_PATH( "pcbnew.page_layout_descr_file",
             &m_BoardDrawingSheetFile, "" ) );
 
+    m_params.emplace_back( new PARAM<wxString>( "board.stackup_control",
+            &m_BoardStackupControl, wxEmptyString ) );
+
     m_params.emplace_back( new PARAM_PATH( "pcbnew.last_paths.netlist",
             &m_PcbLastPath[LAST_PATH_NETLIST], "" ) );
 
@@ -89,6 +92,8 @@ PROJECT_FILE::PROJECT_FILE( const wxString& aFullPath ) :
 
     m_params.emplace_back( new PARAM_PATH( "pcbnew.last_paths.plot",
             &m_PcbLastPath[LAST_PATH_PLOT], "" ) );
+
+    m_params.emplace_back( new PARAM_PATH( "pcbnew.last_paths.step", &m_PcbLastPath[LAST_PATH_STEP], "" ) );
 
     m_params.emplace_back( new PARAM<wxString>( "schematic.legacy_lib_dir",
             &m_LegacyLibDir, "" ) );

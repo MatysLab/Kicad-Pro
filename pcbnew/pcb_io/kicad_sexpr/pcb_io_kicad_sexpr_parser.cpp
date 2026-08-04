@@ -1425,13 +1425,18 @@ BOARD* PCB_IO_KICAD_SEXPR_PARSER::parseBOARD_unchecked()
             {
                 LSET layers = curr_item.GetLayerSet();
 
-                if( layers.test( Rescue ) )
-                {
-                    layers.set( destLayer );
-                    layers.reset( Rescue );
-                }
+                if( !layers.test( Rescue ) )
+                    return;
 
-                curr_item.SetLayerSet( layers );
+                layers.set( destLayer );
+                layers.reset( Rescue );
+
+                // Single-layer items (shapes, text) ignore non-copper layers in SetLayerSet, so
+                // move them with SetLayer. Multi-layer items keep their full set.
+                if( layers.count() == 1 )
+                    curr_item.SetLayer( destLayer );
+                else
+                    curr_item.SetLayerSet( layers );
             };
 
             for( PCB_TRACK* track : m_board->Tracks() )
@@ -1482,11 +1487,16 @@ BOARD* PCB_IO_KICAD_SEXPR_PARSER::parseBOARD_unchecked()
             }
 
             m_undefinedLayers.clear();
+
+            // Rescued items make the board differ from disk. Mark modified so it gets re-saved.
+            m_board->SetModified();
         }
         else
         {
-            THROW_IO_ERROR( wxT( "One or more undefined undefinedLayerNames was found; "
-                                 "open the board in the PCB Editor to resolve." ) );
+            THROW_IO_ERROR( wxString::Format( _( "One or more items were found on undefined "
+                                                 "layers (%s). Open the board in the PCB Editor "
+                                                 "to resolve." ),
+                                              undefinedLayerNames ) );
         }
     }
 
@@ -2294,7 +2304,10 @@ void PCB_IO_KICAD_SEXPR_PARSER::parseLayers()
             else
                 anyHidden = true;
 
-            m_board->SetLayerDescr( PCB_LAYER_ID( cu_layer.m_number ), cu_layer );
+            if( !m_preserveDestinationStackup || !m_board->IsLayerEnabled( PCB_LAYER_ID( cu_layer.m_number ) ) )
+            {
+                m_board->SetLayerDescr( PCB_LAYER_ID( cu_layer.m_number ), cu_layer );
+            }
 
             UTF8 name = cu_layer.m_name;
 
@@ -2344,7 +2357,8 @@ void PCB_IO_KICAD_SEXPR_PARSER::parseLayers()
         else
             anyHidden = true;
 
-        m_board->SetLayerDescr( it->second, layer );
+        if( !m_preserveDestinationStackup || !m_board->IsLayerEnabled( it->second ) )
+            m_board->SetLayerDescr( it->second, layer );
 
         token = NextTok();
 
@@ -2362,13 +2376,21 @@ void PCB_IO_KICAD_SEXPR_PARSER::parseLayers()
         THROW_PARSE_ERROR( err, CurSource(), CurLine(), CurLineNumber(), CurOffset() );
     }
 
-    m_board->SetCopperLayerCount( copperLayerCount );
-    m_board->SetEnabledLayers( enabledLayers );
+    if( m_preserveDestinationStackup )
+    {
+        m_board->SetCopperLayerCount( std::max( copperLayerCount, m_board->GetCopperLayerCount() ) );
+        m_board->SetEnabledLayers( enabledLayers | m_board->GetEnabledLayers() );
+    }
+    else
+    {
+        m_board->SetCopperLayerCount( copperLayerCount );
+        m_board->SetEnabledLayers( enabledLayers );
 
-    // Only set this if any layers were explicitly marked as hidden.  Otherwise, we want to leave
-    // this alone; default visibility will show everything
-    if( anyHidden )
-        m_board->m_LegacyVisibleLayers = visibleLayers;
+        // Only set this if any layers were explicitly marked as hidden.  Otherwise, we want to leave
+        // this alone; default visibility will show everything
+        if( anyHidden )
+            m_board->m_LegacyVisibleLayers = visibleLayers;
+    }
 }
 
 

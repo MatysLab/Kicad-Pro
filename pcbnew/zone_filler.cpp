@@ -24,7 +24,10 @@
  */
 
 #include <atomic>
+#include <cmath>
+#include <functional>
 #include <future>
+#include <wx/filename.h>
 #include <hash.h>
 #include <set>
 #include <unordered_set>
@@ -56,6 +59,7 @@
 #include <thread_pool.h>
 #include <math/util.h>      // for KiROUND
 #include "zone_filler.h"
+#include <wildcards_and_files_ext.h>
 #include "project.h"
 #include "project/project_local_settings.h"
 #include "pcb_barcode.h"
@@ -90,13 +94,29 @@ public:
 class VERTEX_CONNECTOR : protected VERTEX_SET
 {
 public:
-    VERTEX_CONNECTOR( const BOX2I& aBBox, const SHAPE_POLY_SET& aPolys, int aDist ) : VERTEX_SET( 0 )
+    VERTEX_CONNECTOR( const BOX2I& aBBox, const SHAPE_POLY_SET& aPolys, int aDist ) :
+            VERTEX_SET( ADVANCED_CFG::GetCfg().m_TriangulateSimplificationLevel )
     {
         SetBoundingBox( aBBox );
         VERTEX* tail = nullptr;
 
         for( int i = 0; i < aPolys.OutlineCount(); i++ )
-            tail = createList( aPolys.Outline( i ), tail, (void*)( intptr_t )( i ) );
+        {
+            const SHAPE_LINE_CHAIN& outline = aPolys.Outline( i );
+            std::vector<double>&    distances = m_outlineDistances.emplace_back();
+
+            distances.reserve( outline.PointCount() + 1 );
+            distances.push_back( 0.0 );
+
+            for( int j = 0; j < outline.PointCount(); j++ )
+            {
+                distances.push_back( distances.back()
+                                     + ( outline.CPoint( j + 1 ) - outline.CPoint( j ) )
+                                               .EuclideanNorm() );
+            }
+
+            tail = createList( outline, tail, (void*)( intptr_t )( i ) );
+        }
 
         if( tail )
             tail->updateList();
@@ -116,6 +136,20 @@ public:
 
         auto check_pt = [&]( VERTEX* p )
         {
+            // A nearby point along the same contour is already connected and would consume the
+            // visited-point suppression before a contour-distant point across a neck is considered.
+            if( p->GetUserData() == aPt->GetUserData() )
+            {
+                const std::vector<double>& distances =
+                        m_outlineDistances[(intptr_t) p->GetUserData()];
+                double directDistance = std::abs( distances[p->i] - distances[aPt->i] );
+                double contourDistance =
+                        std::min( directDistance, distances.back() - directDistance );
+
+                if( contourDistance < m_dist )
+                    return;
+            }
+
             VECTOR2D diff( p->x - aPt->x, p->y - aPt->y );
             SEG::ecoord dist2 = diff.SquaredEuclideanNorm();
 
@@ -198,8 +232,9 @@ public:
     }
 
 private:
-    std::set<RESULTS> m_results;
-    int m_dist;
+    std::set<RESULTS>                m_results;
+    std::vector<std::vector<double>> m_outlineDistances;
+    int                              m_dist;
 };
 
 
@@ -379,6 +414,40 @@ void ZONE_FILLER::SetProgressReporter( PROGRESS_REPORTER* aReporter )
 bool ZONE_FILLER::Fill( const std::vector<ZONE*>& aZones, bool aCheck, wxWindow* aParent )
 {
     std::lock_guard<KISPINLOCK> lock( m_board->GetConnectivity()->GetLock() );
+
+    // The fill evaluates thermal-relief and clearance rules through the board's DRC engine on
+    // worker threads.  Interactive callers always supply an initialized engine, but headless
+    // consumers (the Python/API ZONE_FILLER) can reach here with none, which would crash on the
+    // first EvalRules() call.
+    BOARD_DESIGN_SETTINGS& bds = m_board->GetDesignSettings();
+
+    if( !bds.m_DRCEngine )
+    {
+        std::shared_ptr<DRC_ENGINE> drcEngine = std::make_shared<DRC_ENGINE>( m_board, &bds );
+
+        wxString rulesPath;
+
+        if( !m_board->GetFileName().IsEmpty() && m_board->GetProject() )
+        {
+            wxFileName fn( m_board->GetFileName() );
+            fn.SetExt( FILEEXT::DesignRulesFileExtension );
+            rulesPath = m_board->GetProject()->AbsolutePath( fn.GetFullName() );
+        }
+
+        try
+        {
+            drcEngine->InitEngine( wxFileName( rulesPath ) );
+        }
+        catch( ... )
+        {
+            // Rules failing to compile only matters when the user runs DRC; the fill falls back
+            // to the implicit constraints, which is enough to avoid the crash.
+        }
+
+        // Publish only after InitEngine() has fully populated the engine so a concurrent reader
+        // never observes a non-null but half-initialized engine.
+        bds.m_DRCEngine = drcEngine;
+    }
 
     std::vector<std::pair<ZONE*, PCB_LAYER_ID>>               toFill;
     std::map<std::pair<ZONE*, PCB_LAYER_ID>, HASH_128>        oldFillHashes;
@@ -990,14 +1059,73 @@ bool ZONE_FILLER::Fill( const std::vector<ZONE*>& aZones, bool aCheck, wxWindow*
     // slower task from claiming the same freed area.
     const bool iterativeRefill = ADVANCED_CFG::GetCfg().m_ZoneFillIterativeRefill;
 
-    if( iterativeRefill && !zonesWithRemovedIslandLayers.empty() )
+    // The initial fill subtracts a higher-priority same-net zone's outline, but
+    // refillZoneFromCache() subtracts its actual fill; seed the refill with overlapping
+    // lower zones so they reclaim any notch the higher zone left unfilled (issue 23790).
+    std::set<std::pair<ZONE*, PCB_LAYER_ID>> sameNetOverlapSeeds;
+
+    if( iterativeRefill )
+    {
+        LSET boardCu = LSET::AllCuMask( m_board->GetCopperLayerCount() );
+
+        // Bucket by net so each lower zone scans only its own net.
+        std::map<int, std::vector<ZONE*>> zonesByNet;
+
+        forEachBoardAndFootprintZone(
+                m_board,
+                [&]( ZONE* zone )
+                {
+                    if( !zone->GetIsRuleArea() && !zone->IsTeardropArea() )
+                        zonesByNet[zone->GetNetCode()].push_back( zone );
+                } );
+
+        for( ZONE* lowerZone : aZones )
+        {
+            if( lowerZone->GetIsRuleArea() || lowerZone->IsTeardropArea() )
+                continue;
+
+            auto netIt = zonesByNet.find( lowerZone->GetNetCode() );
+
+            if( netIt == zonesByNet.end() )
+                continue;
+
+            LSET lowerLayers = lowerZone->GetLayerSet() & boardCu;
+
+            for( ZONE* higherZone : netIt->second )
+            {
+                if( higherZone == lowerZone
+                        || higherZone->GetAssignedPriority() <= lowerZone->GetAssignedPriority() )
+                    continue;
+
+                if( !lowerZone->GetBoundingBox().Intersects( higherZone->GetBoundingBox() ) )
+                    continue;
+
+                LSET sharedLayers = lowerLayers & higherZone->GetLayerSet();
+
+                for( PCB_LAYER_ID layer : sharedLayers.Seq() )
+                {
+                    // Without a higher-zone fill in the snapshot the lower zone would pour
+                    // through the higher zone's outline.
+                    if( lowerZone->HasFilledPolysForLayer( layer )
+                            && higherZone->HasFilledPolysForLayer( layer ) )
+                    {
+                        sameNetOverlapSeeds.insert( { lowerZone, layer } );
+                    }
+                }
+            }
+        }
+    }
+
+    if( iterativeRefill
+            && ( !zonesWithRemovedIslandLayers.empty() || !sameNetOverlapSeeds.empty() ) )
     {
         const int maxIterations = 8;
         bool      progressReported = false;
         bool      hitIterationLimit = false;
 
-        // Seed: zone-layer pairs whose fills changed due to initial island removal.
+        // Seed: island-removal changes plus same-net overlap reclaims (see above).
         std::set<std::pair<ZONE*, PCB_LAYER_ID>> changedZoneLayers( zonesWithRemovedIslandLayers );
+        changedZoneLayers.insert( sameNetOverlapSeeds.begin(), sameNetOverlapSeeds.end() );
 
         auto cached_refill_tessellate_lambda = [&]( const std::pair<ZONE*, PCB_LAYER_ID>& aFillItem ) -> int
         {
@@ -1070,7 +1198,7 @@ bool ZONE_FILLER::Fill( const std::vector<ZONE*>& aZones, bool aCheck, wxWindow*
                 if( m_progressReporter )
                 {
                     m_progressReporter->AdvancePhase();
-                    m_progressReporter->Report( _( "Refilling zones after island removal..." ) );
+                    m_progressReporter->Report( _( "Refilling overlapping zones..." ) );
                     m_progressReporter->KeepRefreshing();
                 }
 
@@ -1444,7 +1572,9 @@ bool ZONE_FILLER::Fill( const std::vector<ZONE*>& aZones, bool aCheck, wxWindow*
             if( via->GetZoneLayerOverride( layer ) != ZLO_FORCE_FLASHED )
                 continue;
 
-            if( !zoneReachesPoint( netcode, layer, center, holeRadius ) )
+            int reach = std::max( holeRadius, via->GetWidth( layer ) / 2 );
+
+            if( !zoneReachesPoint( netcode, layer, center, reach ) )
                 via->SetZoneLayerOverride( layer, ZLO_FORCE_NO_ZONE_CONNECTION );
         }
     }
@@ -1467,7 +1597,13 @@ bool ZONE_FILLER::Fill( const std::vector<ZONE*>& aZones, bool aCheck, wxWindow*
                 if( pad->GetZoneLayerOverride( layer ) != ZLO_FORCE_FLASHED )
                     continue;
 
-                if( !zoneReachesPoint( netcode, layer, center, holeRadius ) )
+                // A thermal spoke reaches the pad copper edge. Testing only the hole radius lands
+                // on the spoke endpoint and rounds out for some hole sizes, dropping a connected
+                // pad's flashing (issue 24865). Use the pad copper radius, still inside the gap.
+                VECTOR2I padSize = pad->GetSize( layer );
+                int      reach = std::max( holeRadius, std::min( padSize.x, padSize.y ) / 2 );
+
+                if( !zoneReachesPoint( netcode, layer, center, reach ) )
                     pad->SetZoneLayerOverride( layer, ZLO_FORCE_NO_ZONE_CONNECTION );
             }
         }
@@ -1656,10 +1792,10 @@ void ZONE_FILLER::addKnockout( BOARD_ITEM* aItem, PCB_LAYER_ID aLayer, int aGap,
  * Removes thermal reliefs from the shape for any pads connected to the zone.  Does NOT add
  * in spokes, which must be done later.
  */
-void ZONE_FILLER::knockoutThermalReliefs( const ZONE* aZone, PCB_LAYER_ID aLayer,
-                                          SHAPE_POLY_SET& aFill,
+void ZONE_FILLER::knockoutThermalReliefs( const ZONE* aZone, PCB_LAYER_ID aLayer, SHAPE_POLY_SET& aFill,
                                           std::vector<BOARD_ITEM*>& aThermalConnectionPads,
-                                          std::vector<PAD*>& aNoConnectionPads )
+                                          std::vector<PAD*>&        aNoConnectionPads,
+                                          std::vector<BOARD_ITEM*>& aSolidConnectionItems )
 {
     BOARD_DESIGN_SETTINGS& bds = m_board->GetDesignSettings();
     ZONE_CONNECTION        connection;
@@ -1957,7 +2093,9 @@ void ZONE_FILLER::knockoutThermalReliefs( const ZONE* aZone, PCB_LAYER_ID aLayer
 
             case ZONE_CONNECTION::FULL:
             default:
-                // No knockout - via connects directly to the hatch webbing
+                // No knockout. A small via in a hatch hole would be isolated, so register it
+                // to drop that hole and keep the via on the webbing.
+                aSolidConnectionItems.push_back( via );
                 break;
             }
         }
@@ -2703,6 +2841,7 @@ bool ZONE_FILLER::fillCopperZone( const ZONE* aZone, PCB_LAYER_ID aLayer, PCB_LA
 
     std::vector<BOARD_ITEM*>     thermalConnectionPads;
     std::vector<PAD*>            noConnectionPads;
+    std::vector<BOARD_ITEM*>     solidConnectionItems;
     std::deque<SHAPE_LINE_CHAIN> thermalSpokes;
     SHAPE_POLY_SET               clearanceHoles;
 
@@ -2716,7 +2855,7 @@ bool ZONE_FILLER::fillCopperZone( const ZONE* aZone, PCB_LAYER_ID aLayer, PCB_LA
      * Knockout thermal reliefs.
      */
 
-    knockoutThermalReliefs( aZone, aLayer, aFillPolys, thermalConnectionPads, noConnectionPads );
+    knockoutThermalReliefs( aZone, aLayer, aFillPolys, thermalConnectionPads, noConnectionPads, solidConnectionItems );
     DUMP_POLYS_TO_COPPER_LAYER( aFillPolys, In2_Cu, wxT( "minus-thermal-reliefs" ) );
 
     if( m_progressReporter && m_progressReporter->IsCancelled() )
@@ -2935,6 +3074,22 @@ bool ZONE_FILLER::fillCopperZone( const ZONE* aZone, PCB_LAYER_ID aLayer, PCB_LA
         // the hatch hole-dropping logic considers both types of rings
         SHAPE_POLY_SET ringsToProtect = thermalRings;
         ringsToProtect.BooleanAdd( clearanceHoles );
+
+        // Drop the hatch hole around each fully connected via so it stays on the webbing.
+        // Feed only the hole-drop set, not the fill, so wider vias are left untouched.
+        for( BOARD_ITEM* item : solidConnectionItems )
+        {
+            if( item->Type() != PCB_VIA_T || !item->IsOnLayer( aLayer ) )
+                continue;
+
+            PCB_VIA* via = static_cast<PCB_VIA*>( item );
+
+            SHAPE_POLY_SET disc;
+            TransformCircleToPolygon( disc, via->GetPosition(), via->GetWidth( aLayer ) / 2, m_maxError,
+                                      ERROR_OUTSIDE );
+            disc.BooleanIntersection( aSmoothedOutline );
+            ringsToProtect.BooleanAdd( disc );
+        }
 
         if( !addHatchFillTypeOnZone( aZone, aLayer, aDebugLayer, aFillPolys, ringsToProtect ) )
             return false;

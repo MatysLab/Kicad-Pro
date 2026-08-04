@@ -27,6 +27,7 @@
 #include <sch_reference_list.h>
 #include <sch_commit.h>
 #include <sch_screen.h>
+#include <template_fieldnames.h>
 #include "string_utils.h"
 
 #include "fields_data_model.h"
@@ -271,7 +272,7 @@ void FIELDS_EDITOR_GRID_DATA_MODEL::updateDataStoreSymbolField( const SCH_REFERE
     {
         m_dataStore[key][aFieldName] = getAttributeValue( aSymbolRef, aFieldName, aVariantName );
     }
-    else if( const SCH_FIELD* field = symbol->FindFieldCaseInsensitive( aFieldName ) )
+    else if( const SCH_FIELD* field = symbol->GetField( aFieldName ) )
     {
         if( field->IsPrivate() )
         {
@@ -342,7 +343,7 @@ int FIELDS_EDITOR_GRID_DATA_MODEL::GetFieldNameCol( const wxString& aFieldName )
 {
     for( size_t i = 0; i < m_cols.size(); i++ )
     {
-        if( m_cols[i].m_fieldName.CmpNoCase( aFieldName ) == 0 )
+        if( FieldNamesAreDuplicates( m_cols[i].m_fieldName, aFieldName ) )
             return static_cast<int>( i );
     }
 
@@ -398,7 +399,8 @@ bool FIELDS_EDITOR_GRID_DATA_MODEL::IsExpanderColumn( int aCol ) const
 
 wxString FIELDS_EDITOR_GRID_DATA_MODEL::GetValue( int aRow, int aCol )
 {
-    GetView()->SetReadOnly( aRow, aCol, IsExpanderColumn( aCol ) );
+    GetView()->SetReadOnly( aRow, aCol,
+                            IsExpanderColumn( aCol ) || rowAttributeInheritedFromSheet( m_rows[aRow], aCol ) );
     return GetValue( m_rows[aRow], aCol );
 }
 
@@ -568,6 +570,11 @@ wxString FIELDS_EDITOR_GRID_DATA_MODEL::GetValue( const DATA_MODEL_ROW& group, i
                 return INDETERMINATE_STATE;
 
             wxString refFieldValue = m_dataStore[symbolKey][m_cols[aCol].m_fieldName];
+
+            // Show the effective state when a sheet forces it on, but do not change
+            // the stored value so the symbol is never stamped on apply.
+            if( ColIsAttribute( aCol ) && attributeInheritedFromSheet( ref, m_cols[aCol].m_fieldName ) )
+                refFieldValue = wxS( "1" );
 
             if( resolveVars )
             {
@@ -937,9 +944,8 @@ wxString FIELDS_EDITOR_GRID_DATA_MODEL::getFieldShownText( const SCH_REFERENCE& 
 
 bool FIELDS_EDITOR_GRID_DATA_MODEL::isAttribute( const wxString& aFieldName )
 {
-    return aFieldName == wxS( "${DNP}" )
-           || aFieldName == wxS( "${EXCLUDE_FROM_BOARD}" )
-           || aFieldName == wxS( "${EXCLUDE_FROM_BOM}" )
+    return aFieldName == wxS( "${DNP}" ) || aFieldName == wxS( "${EXCLUDE_FROM_BOARD}" )
+           || aFieldName == wxS( "${EXCLUDE_FROM_BOM}" ) || aFieldName == wxS( "${EXCLUDE_FROM_POS_FILES}" )
            || aFieldName == wxS( "${EXCLUDE_FROM_SIM}" );
 }
 
@@ -959,7 +965,45 @@ wxString FIELDS_EDITOR_GRID_DATA_MODEL::getAttributeValue( const SCH_REFERENCE& 
     if( aAttributeName == wxS( "${EXCLUDE_FROM_SIM}" ) )
         return aRef.GetSymbolExcludedFromSim( aVariantName ) ? wxS( "1" ) : wxS( "0" );
 
+    if( aAttributeName == wxS( "${EXCLUDE_FROM_POS_FILES}" ) )
+        return aRef.GetSymbolExcludedFromPosFiles( aVariantName ) ? wxS( "1" ) : wxS( "0" );
+
     return wxS( "0" );
+}
+
+
+bool FIELDS_EDITOR_GRID_DATA_MODEL::attributeInheritedFromSheet( const SCH_REFERENCE& aRef,
+                                                                 const wxString&      aAttributeName ) const
+{
+    const SCH_SHEET_PATH& path = aRef.GetSheetPath();
+
+    if( aAttributeName == wxS( "${DNP}" ) )
+        return path.GetDNP( m_currentVariant );
+    else if( aAttributeName == wxS( "${EXCLUDE_FROM_BOARD}" ) )
+        return path.GetExcludedFromBoard( m_currentVariant );
+    else if( aAttributeName == wxS( "${EXCLUDE_FROM_BOM}" ) )
+        return path.GetExcludedFromBOM( m_currentVariant );
+    else if( aAttributeName == wxS( "${EXCLUDE_FROM_SIM}" ) )
+        return path.GetExcludedFromSim( m_currentVariant );
+
+    return false;
+}
+
+
+bool FIELDS_EDITOR_GRID_DATA_MODEL::rowAttributeInheritedFromSheet( const DATA_MODEL_ROW& aGroup, int aCol )
+{
+    if( !ColIsAttribute( aCol ) || aGroup.m_Refs.empty() )
+        return false;
+
+    // Lock the cell only when every symbol in the row inherits it, so a mixed group
+    // stays editable and shows the indeterminate state.
+    for( const SCH_REFERENCE& ref : aGroup.m_Refs )
+    {
+        if( !attributeInheritedFromSheet( ref, m_cols[aCol].m_fieldName ) )
+            return false;
+    }
+
+    return true;
 }
 
 
@@ -1022,6 +1066,11 @@ bool FIELDS_EDITOR_GRID_DATA_MODEL::setAttributeValue( SCH_REFERENCE&  aRef,
     {
         attrChanged = aRef.GetSymbolExcludedFromSim( aVariantName ) != newValue;
         aRef.SetSymbolExcludedFromSim( newValue, aVariantName );
+    }
+    else if( aAttributeName == wxS( "${EXCLUDE_FROM_POS_FILES}" ) )
+    {
+        attrChanged = aRef.GetSymbolExcludedFromPosFiles( aVariantName ) != newValue;
+        aRef.SetSymbolExcludedFromPosFiles( newValue, aVariantName );
     }
 
     return attrChanged;
@@ -1301,13 +1350,7 @@ void FIELDS_EDITOR_GRID_DATA_MODEL::ApplyData( SCH_COMMIT& aCommit, TEMPLATES& a
             if( IsGeneratedField( srcName ) )
                 continue;
 
-            SCH_FIELD* destField = symbol->FindFieldCaseInsensitive( srcName );
-
-            if( destField && !destField->IsMandatory() && destField->GetName() != srcName )
-            {
-                destField->SetName( srcName );
-                symbolModified = true;
-            }
+            SCH_FIELD* destField = symbol->GetField( srcName );
 
             if( destField && destField->IsPrivate() )
             {
@@ -1363,7 +1406,7 @@ void FIELDS_EDITOR_GRID_DATA_MODEL::ApplyData( SCH_COMMIT& aCommit, TEMPLATES& a
             bool stillTracked = std::any_of( fieldStore.begin(), fieldStore.end(),
                                              [&]( const auto& kv )
                                              {
-                                                 return kv.first.IsSameAs( existingName, false );
+                                                 return kv.first == existingName;
                                              } );
 
             if( !stillTracked )

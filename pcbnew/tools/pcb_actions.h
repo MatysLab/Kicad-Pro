@@ -216,6 +216,7 @@ public:
     static TOOL_ACTION placeBarcode;
     static TOOL_ACTION drawZone;
     static TOOL_ACTION drawVia;
+    static TOOL_ACTION viaStitching;
     static TOOL_ACTION drawRuleArea;
     static TOOL_ACTION drawZoneCutout;
     static TOOL_ACTION drawSimilarZone;
@@ -471,6 +472,9 @@ public:
 
     static TOOL_ACTION editFpInFpEditor;
     static TOOL_ACTION editLibFpInFpEditor;
+
+    static TOOL_ACTION toggleExcludeFromBOM;
+    static TOOL_ACTION toggleExcludeFromPosFiles;
 
     static TOOL_ACTION showLayersManager;
     static TOOL_ACTION showNetInspector;

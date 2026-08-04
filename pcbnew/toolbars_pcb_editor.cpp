@@ -24,7 +24,9 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
+#include <cmath>
 #include <memory>
+#include <nlohmann/json.hpp>
 #include <string>
 
 #include <advanced_config.h>
@@ -36,6 +38,7 @@
 #include <footprint.h>
 #include <pcb_field.h>
 #include <kiface_base.h>
+#include <project/project_file.h>
 #include <kiplatform/ui.h>
 #include <macros.h>
 #include <pcb_edit_frame.h>
@@ -309,7 +312,8 @@ std::optional<TOOLBAR_CONFIGURATION> PCB_EDIT_TOOLBAR_SETTINGS::DefaultToolbarCo
         config.AppendAction( ACTIONS::save );
 
         config.AppendSeparator()
-              .AppendAction( PCB_ACTIONS::boardSetup );
+              .AppendAction( PCB_ACTIONS::boardSetup )
+              .AppendAction( PCB_ACTIONS::viaStitching );
 
         config.AppendSeparator()
               .AppendAction( ACTIONS::pageSettings )
@@ -630,6 +634,62 @@ static wxString ComboBoxUnits( EDA_UNITS aUnits, double aValue, bool aIncludeLab
 }
 
 
+std::optional<PCB_EDIT_FRAME::ACTIVE_LAYER_IMPEDANCE_WIDTH>
+PCB_EDIT_FRAME::GetActiveLayerImpedanceTrackWidth() const
+{
+    if( !GetBoard() || !IsCopperLayer( GetActiveLayer() ) )
+        return std::nullopt;
+
+    wxString projectSettings = Prj().GetProjectFile().m_BoardStackupControl;
+
+    if( projectSettings.IsEmpty() )
+    {
+        const auto& properties = GetBoard()->GetProperties();
+        const auto property = properties.find( wxT( "kicad_pro.stackup_control" ) );
+
+        if( property == properties.end() )
+            return std::nullopt;
+
+        projectSettings = property->second;
+    }
+
+    try
+    {
+        const nlohmann::json root = nlohmann::json::parse(
+                std::string( projectSettings.utf8_str() ) );
+
+        if( root.value( "format", "" ) != "kicad-pro-project-stackup"
+            || root.value( "version", 0 ) != 1 || !root.value( "enabled", false ) )
+        {
+            return std::nullopt;
+        }
+
+        for( const nlohmann::json& layer : root.value( "layers", nlohmann::json::array() ) )
+        {
+            if( layer.value( "layer", -1 ) != static_cast<int>( GetActiveLayer() ) )
+                continue;
+
+            const double widthMm = layer.value( "width_mm", 0.0 );
+            double targetOhms = 0.0;
+            const wxString target = wxString::FromUTF8( layer.value( "target_ohms", "" ) );
+
+            if( std::isfinite( widthMm ) && widthMm > 0.0
+                && ( target.ToDouble( &targetOhms ) || target.ToCDouble( &targetOhms ) )
+                && targetOhms > 0.0 )
+            {
+                return ACTIVE_LAYER_IMPEDANCE_WIDTH{ pcbIUScale.mmToIU( widthMm ),
+                                                     targetOhms };
+            }
+        }
+    }
+    catch( const std::exception& )
+    {
+    }
+
+    return std::nullopt;
+}
+
+
 void PCB_EDIT_FRAME::UpdateTrackWidthSelectBox( wxChoice* aTrackWidthSelectBox, bool aShowNetclass,
                                                 bool aShowEdit )
 {
@@ -642,6 +702,17 @@ void PCB_EDIT_FRAME::UpdateTrackWidthSelectBox( wxChoice* aTrackWidthSelectBox, 
     GetUnitPair( primaryUnit, secondaryUnit );
 
     wxString msg;
+    const bool toolbarSelector = aTrackWidthSelectBox == m_SelTrackWidthBox;
+    std::optional<ACTIVE_LAYER_IMPEDANCE_WIDTH> impedanceWidth;
+
+    if( toolbarSelector )
+    {
+        m_activeLayerImpedanceWidthChoice = -1;
+        impedanceWidth = GetActiveLayerImpedanceTrackWidth();
+
+        if( !impedanceWidth && GetDesignSettings().UseActiveLayerImpedanceTrackWidth() )
+            GetDesignSettings().UseActiveLayerImpedanceTrackWidth( false );
+    }
 
     aTrackWidthSelectBox->Clear();
 
@@ -658,6 +729,20 @@ void PCB_EDIT_FRAME::UpdateTrackWidthSelectBox( wxChoice* aTrackWidthSelectBox, 
         aTrackWidthSelectBox->Append( msg );
     }
 
+    if( impedanceWidth )
+    {
+        m_activeLayerImpedanceWidthChoice = static_cast<int>( aTrackWidthSelectBox->GetCount() );
+        msg.Printf( _( "Track: %s %g Ω impedance — %s (%s)" ),
+                    GetBoard()->GetLayerName( GetActiveLayer() ),
+                    impedanceWidth->m_targetOhms,
+                    ComboBoxUnits( primaryUnit, impedanceWidth->m_width ),
+                    ComboBoxUnits( secondaryUnit, impedanceWidth->m_width ) );
+        aTrackWidthSelectBox->Append( msg );
+
+        if( GetDesignSettings().UseActiveLayerImpedanceTrackWidth() )
+            GetDesignSettings().SetActiveLayerImpedanceTrackWidth( impedanceWidth->m_width );
+    }
+
     if( aShowEdit )
     {
         aTrackWidthSelectBox->Append( wxT( "---" ) );
@@ -669,7 +754,16 @@ void PCB_EDIT_FRAME::UpdateTrackWidthSelectBox( wxChoice* aTrackWidthSelectBox, 
 
     // GetDesignSettings().GetTrackWidthIndex() can be < 0 if no board loaded
     // So in this case select the first select box item available (use netclass)
-    aTrackWidthSelectBox->SetSelection( std::max( 0, GetDesignSettings().GetTrackWidthIndex() ) );
+    if( toolbarSelector && impedanceWidth
+        && GetDesignSettings().UseActiveLayerImpedanceTrackWidth() )
+    {
+        aTrackWidthSelectBox->SetSelection( m_activeLayerImpedanceWidthChoice );
+    }
+    else
+    {
+        aTrackWidthSelectBox->SetSelection(
+                std::max( 0, GetDesignSettings().GetTrackWidthIndex() ) );
+    }
 }
 
 
@@ -854,7 +948,12 @@ void PCB_EDIT_FRAME::OnUpdateSelectTrackWidth( wxUpdateUIEvent& aEvent )
         BOARD_DESIGN_SETTINGS& bds = GetDesignSettings();
         int                    sel;
 
-        if( bds.UseCustomTrackViaSize() )
+        if( bds.UseActiveLayerImpedanceTrackWidth()
+            && m_activeLayerImpedanceWidthChoice >= 0 )
+        {
+            sel = m_activeLayerImpedanceWidthChoice;
+        }
+        else if( bds.UseCustomTrackViaSize() )
             sel = wxNOT_FOUND;
         else
             // if GetTrackWidthIndex() < 0, display the "use netclass" option
