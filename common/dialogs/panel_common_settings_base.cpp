@@ -300,18 +300,18 @@ PANEL_COMMON_SETTINGS_BASE::PANEL_COMMON_SETTINGS_BASE( wxWindow* parent, wxWind
 	bSizerAppTheme->Add( m_stAppTheme, 0, wxALL, 5 );
 
 	m_rbAppThemeLight = new wxRadioButton( this, wxID_ANY, _("Light"), wxDefaultPosition, wxDefaultSize, wxRB_GROUP );
-	m_rbAppThemeLight->SetToolTip( _("Use icons designed for light window backgrounds") );
+	m_rbAppThemeLight->SetToolTip( _("Use the light application appearance") );
 
 	bSizerAppTheme->Add( m_rbAppThemeLight, 0, wxALL, 5 );
 
 	m_rbAppThemeDark = new wxRadioButton( this, wxID_ANY, _("Dark"), wxDefaultPosition, wxDefaultSize, 0 );
-	m_rbAppThemeDark->SetToolTip( _("Use icons designed for dark window backgrounds") );
+	m_rbAppThemeDark->SetToolTip( _("Use the dark application appearance") );
 
 	bSizerAppTheme->Add( m_rbAppThemeDark, 0, wxALL, 5 );
 
 	m_rbAppThemeAuto = new wxRadioButton( this, wxID_ANY, _("Automatic"), wxDefaultPosition, wxDefaultSize, 0 );
 	m_rbAppThemeAuto->SetValue( true );
-	m_rbAppThemeAuto->SetToolTip( _("Automatically choose light or dark icons based on the system color theme") );
+	m_rbAppThemeAuto->SetToolTip( _("Use the system application appearance") );
 
 	bSizerAppTheme->Add( m_rbAppThemeAuto, 0, wxALL, 5 );
 
